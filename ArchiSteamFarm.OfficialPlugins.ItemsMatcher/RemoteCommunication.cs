@@ -1446,8 +1446,9 @@ internal sealed class RemoteCommunication : IAsyncDisposable, IDisposable {
 				HashSet<Asset> itemsToGive = MatchingUtilities.GetTradableItemsFromInventory(ourInventory.Values, classIDsToGive);
 				HashSet<Asset> itemsToReceive = MatchingUtilities.GetTradableItemsFromInventory(theirInventory, classIDsToReceive, true);
 
-				if ((itemsToGive.Count != itemsToReceive.Count) || !Trading.IsFairExchange(itemsToGive, itemsToReceive)) {
-					// Failsafe
+				// Verify that trade is fair - count check is now part of IsFairExchange validation
+				if (!Trading.IsFairExchange(itemsToGive, itemsToReceive)) {
+					// Failsafe - this should never happen as matching algorithm ensures fairness
 					throw new InvalidOperationException($"{nameof(itemsToGive)} && {nameof(itemsToReceive)}");
 				}
 

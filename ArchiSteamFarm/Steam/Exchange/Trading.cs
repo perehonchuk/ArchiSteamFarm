@@ -88,11 +88,16 @@ public sealed class Trading : IDisposable {
 			throw new ArgumentNullException(nameof(itemsToReceive));
 		}
 
+		// Calculate total item counts for initial fairness check
+		uint totalItemsToGive = 0;
+		uint totalItemsToReceive = 0;
+
 		Dictionary<(uint RealAppID, EAssetType Type, EAssetRarity Rarity), uint> itemsToGiveAmounts = new();
 
 		foreach (Asset item in itemsToGive) {
 			(uint RealAppID, EAssetType Type, EAssetRarity Rarity) key = (item.RealAppID, item.Type, item.Rarity);
 			itemsToGiveAmounts[key] = itemsToGiveAmounts.GetValueOrDefault(key) + item.Amount;
+			totalItemsToGive += item.Amount;
 		}
 
 		Dictionary<(uint RealAppID, EAssetType Type, EAssetRarity Rarity), uint> itemsToReceiveAmounts = new();
@@ -100,6 +105,12 @@ public sealed class Trading : IDisposable {
 		foreach (Asset item in itemsToReceive) {
 			(uint RealAppID, EAssetType Type, EAssetRarity Rarity) key = (item.RealAppID, item.Type, item.Rarity);
 			itemsToReceiveAmounts[key] = itemsToReceiveAmounts.GetValueOrDefault(key) + item.Amount;
+			totalItemsToReceive += item.Amount;
+		}
+
+		// First, ensure total item count is fair - we should receive at least as many items as we give
+		if (totalItemsToGive > totalItemsToReceive) {
+			return false;
 		}
 
 		// Ensure that amount of items to give is at least amount of items to receive (per all fairness factors)
