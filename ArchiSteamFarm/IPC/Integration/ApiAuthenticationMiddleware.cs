@@ -48,10 +48,12 @@ internal sealed class ApiAuthenticationMiddleware {
 
 	private const byte FailedAuthorizationsCooldownInHours = 1;
 	private const byte MaxFailedAuthorizationAttempts = 5;
+	private const ushort BaseDelayMilliseconds = 500;
 
 	private static readonly ConcurrentDictionary<IPAddress, Task> AuthorizationTasks = new();
 	private static readonly Timer ClearFailedAuthorizationsTimer = new(ClearFailedAuthorizations);
 	private static readonly ConcurrentDictionary<IPAddress, byte> FailedAuthorizations = new();
+	private static readonly ConcurrentDictionary<IPAddress, DateTime> LastFailedAttemptTime = new();
 
 	private readonly ForwardedHeadersOptions ForwardedHeadersOptions;
 	private readonly RequestDelegate Next;
@@ -90,7 +92,10 @@ internal sealed class ApiAuthenticationMiddleware {
 		await context.Response.WriteAsJsonAsync(new GenericResponse<StatusCodeResponse>(false, statusCodeResponse), jsonOptions.Value.JsonSerializerOptions).ConfigureAwait(false);
 	}
 
-	internal static void ClearFailedAuthorizations(object? state = null) => FailedAuthorizations.Clear();
+	internal static void ClearFailedAuthorizations(object? state = null) {
+		FailedAuthorizations.Clear();
+		LastFailedAttemptTime.Clear();
+	}
 
 	internal static IEnumerable<IPAddress> GetCurrentlyBannedIPs() => FailedAuthorizations.Where(static kv => kv.Value >= MaxFailedAuthorizationAttempts).Select(static kv => kv.Key);
 
@@ -100,6 +105,8 @@ internal sealed class ApiAuthenticationMiddleware {
 		if (!FailedAuthorizations.TryGetValue(ipAddress, out byte attempts) || (attempts < MaxFailedAuthorizationAttempts)) {
 			return false;
 		}
+
+		LastFailedAttemptTime.TryRemove(ipAddress, out _);
 
 		return FailedAuthorizations.TryRemove(ipAddress, out _);
 	}
@@ -115,6 +122,19 @@ internal sealed class ApiAuthenticationMiddleware {
 
 		if (FailedAuthorizations.TryGetValue(clientIP, out byte attempts) && (attempts >= MaxFailedAuthorizationAttempts)) {
 			return (HttpStatusCode.Forbidden, false);
+		}
+
+		// Apply progressive delay for failed authentication attempts
+		if ((attempts > 0) && LastFailedAttemptTime.TryGetValue(clientIP, out DateTime lastAttempt)) {
+			// Calculate exponential backoff: BaseDelay * 2^(attempts-1)
+			int delayMilliseconds = BaseDelayMilliseconds * (1 << (attempts - 1));
+			TimeSpan timeSinceLastAttempt = DateTime.UtcNow - lastAttempt;
+			TimeSpan requiredDelay = TimeSpan.FromMilliseconds(delayMilliseconds);
+
+			if (timeSinceLastAttempt < requiredDelay) {
+				TimeSpan remainingDelay = requiredDelay - timeSinceLastAttempt;
+				await Task.Delay(remainingDelay).ConfigureAwait(false);
+			}
 		}
 
 		string? ipcPassword = ASF.GlobalConfig != null ? ASF.GlobalConfig.IPCPassword : GlobalConfig.DefaultIPCPassword;
@@ -175,6 +195,11 @@ internal sealed class ApiAuthenticationMiddleware {
 
 				if (!authorized) {
 					FailedAuthorizations[clientIP] = ++attempts;
+					LastFailedAttemptTime[clientIP] = DateTime.UtcNow;
+				} else {
+					// Clear failed attempts on successful authentication
+					FailedAuthorizations.TryRemove(clientIP, out _);
+					LastFailedAttemptTime.TryRemove(clientIP, out _);
 				}
 			} finally {
 				AuthorizationTasks.TryRemove(clientIP, out _);
