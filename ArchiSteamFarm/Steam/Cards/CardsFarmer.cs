@@ -236,7 +236,11 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			// We should restart the farming if the order or efficiency of the farming could be affected by the newly-activated product
 			// The order is affected when user uses farming order that isn't independent of the game data (it could alter the order in deterministic way if the game was considered in current queue)
 			// The efficiency is affected only in complex algorithm (entirely), as it depends on hours order that is not independent (as specified above)
-			if (!ShouldSkipNewGamesIfPossible && ((Bot.BotConfig.HoursUntilCardDrops > 0) || ((Bot.BotConfig.FarmingOrders.Count > 0) && Bot.BotConfig.FarmingOrders.Any(static farmingOrder => farmingOrder is not BotConfig.EFarmingOrder.Unordered and not BotConfig.EFarmingOrder.Random)))) {
+			// Additionally, queue size changes might trigger algorithm switch between Simple and Complex
+			const byte SmallQueueThreshold = 5;
+			bool mightUseComplexAlgorithm = (Bot.BotConfig.HoursUntilCardDrops > 0) && (GamesToFarm.Count >= SmallQueueThreshold - 1); // -1 because new game might push us over threshold
+
+			if (!ShouldSkipNewGamesIfPossible && (mightUseComplexAlgorithm || ((Bot.BotConfig.FarmingOrders.Count > 0) && Bot.BotConfig.FarmingOrders.Any(static farmingOrder => farmingOrder is not BotConfig.EFarmingOrder.Unordered and not BotConfig.EFarmingOrder.Random)))) {
 				await StopFarming().ConfigureAwait(false);
 				await StartFarming().ConfigureAwait(false);
 			}
@@ -782,8 +786,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			Bot.ArchiLogger.LogGenericInfo(Strings.FormatGamesToIdle(GamesToFarm.Count, GamesToFarm.Sum(static game => game.CardsRemaining), TimeRemaining.ToHumanReadable()));
 
 			// Now the algorithm used for farming depends on whether account is restricted or not
-			if (Bot.BotConfig.HoursUntilCardDrops > 0) {
-				// If we have restricted card drops, we use complex algorithm
+			// Additionally, we use a hybrid approach: if queue size is small, even restricted accounts benefit from simple algorithm
+			const byte SmallQueueThreshold = 5;
+			bool useComplexAlgorithm = (Bot.BotConfig.HoursUntilCardDrops > 0) && (GamesToFarm.Count >= SmallQueueThreshold);
+
+			if (useComplexAlgorithm) {
+				// If we have restricted card drops and sufficient games in queue, we use complex algorithm
 				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Complex"));
 
 				while (GamesToFarm.Count > 0) {
@@ -850,7 +858,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 					}
 				}
 			} else {
-				// If we have unrestricted card drops, we use simple algorithm
+				// If we have unrestricted card drops or small queue size, we use simple algorithm
 				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Simple"));
 
 				while (GamesToFarm.Count > 0) {
@@ -1346,7 +1354,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 			GamesToFarm.Add(game);
 
-			if ((game.HoursPlayed >= Bot.BotConfig.HoursUntilCardDrops) || (GamesToFarm.Count >= ArchiHandler.MaxGamesPlayedConcurrently)) {
+			// Stop adding games if we have enough for complex algorithm or reached the concurrent limit
+			// With small queue optimization, we need fewer games to start farming efficiently
+			const byte SmallQueueThreshold = 5;
+			bool hasEnoughForComplexAlgorithm = (game.HoursPlayed >= Bot.BotConfig.HoursUntilCardDrops) || (GamesToFarm.Count >= SmallQueueThreshold);
+
+			if (hasEnoughForComplexAlgorithm || (GamesToFarm.Count >= ArchiHandler.MaxGamesPlayedConcurrently)) {
 				// Avoid further parsing in this risky method, we have enough for now
 				break;
 			}
