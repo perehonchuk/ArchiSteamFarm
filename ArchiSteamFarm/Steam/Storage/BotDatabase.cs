@@ -194,6 +194,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	private Dictionary<string, byte> GamesRedemptionPriorities { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
 	private BotDatabase(string filePath) : this() {
 		ArgumentException.ThrowIfNullOrEmpty(filePath);
 
@@ -315,6 +320,9 @@ public sealed class BotDatabase : GenericDatabase {
 				}
 
 				GamesToRedeemInBackground[key] = name;
+
+				// Calculate and assign priority based on game name
+				GamesRedemptionPriorities[key] = CalculateRedemptionPriority(name);
 			}
 		}
 
@@ -328,9 +336,23 @@ public sealed class BotDatabase : GenericDatabase {
 			}
 
 			GamesToRedeemInBackground.Clear();
+			GamesRedemptionPriorities.Clear();
 		}
 
 		Utilities.InBackground(Save);
+	}
+
+	internal OrderedDictionary<string, string> GetGamesToRedeemInBackgroundSortedByPriority() {
+		lock (GamesToRedeemInBackground) {
+			// Return games sorted by priority (lowest priority value first = highest priority)
+			OrderedDictionary<string, string> sortedGames = new(StringComparer.OrdinalIgnoreCase);
+
+			foreach ((string key, string name) in GamesToRedeemInBackground.OrderBy(kvp => GamesRedemptionPriorities.TryGetValue(kvp.Key, out byte priority) ? priority : (byte) 128)) {
+				sortedGames[key] = name;
+			}
+
+			return sortedGames;
+		}
 	}
 
 	internal static async Task<BotDatabase?> CreateOrLoad(string filePath) {
@@ -381,8 +403,21 @@ public sealed class BotDatabase : GenericDatabase {
 
 	internal (string? Key, string? Name) GetGameToRedeemInBackground() {
 		lock (GamesToRedeemInBackground) {
+			// Select game with highest priority (lowest priority value = highest priority)
+			string? selectedKey = null;
+			byte highestPriority = byte.MaxValue;
+
 			foreach ((string key, string name) in GamesToRedeemInBackground) {
-				return (key, name);
+				byte priority = GamesRedemptionPriorities.TryGetValue(key, out byte storedPriority) ? storedPriority : (byte) 128;
+
+				if (priority < highestPriority) {
+					highestPriority = priority;
+					selectedKey = key;
+				}
+			}
+
+			if (selectedKey != null) {
+				return (selectedKey, GamesToRedeemInBackground[selectedKey]);
 			}
 		}
 
@@ -406,9 +441,47 @@ public sealed class BotDatabase : GenericDatabase {
 			if (!GamesToRedeemInBackground.Remove(key)) {
 				return;
 			}
+
+			// Also remove from priority tracking
+			GamesRedemptionPriorities.Remove(key);
 		}
 
 		Utilities.InBackground(Save);
+	}
+
+	private static byte CalculateRedemptionPriority(string gameName) {
+		if (string.IsNullOrEmpty(gameName)) {
+			return 128; // Default/medium priority
+		}
+
+		string lowerName = gameName.ToLowerInvariant();
+
+		// Base games get highest priority (lowest value)
+		// DLC and expansions get lower priority (higher value)
+		// This ensures base games are redeemed before their DLC
+
+		// Check for DLC indicators
+		if (lowerName.Contains("dlc") || lowerName.Contains("downloadable content")) {
+			return 200; // Low priority - redeem DLC after base games
+		}
+
+		// Check for expansion indicators
+		if (lowerName.Contains("expansion") || lowerName.Contains("season pass") || lowerName.Contains("bundle")) {
+			return 180; // Medium-low priority
+		}
+
+		// Check for special/deluxe editions
+		if (lowerName.Contains("deluxe") || lowerName.Contains("gold") || lowerName.Contains("ultimate") || lowerName.Contains("premium")) {
+			return 160; // Medium priority
+		}
+
+		// Check for soundtracks and extras
+		if (lowerName.Contains("soundtrack") || lowerName.Contains("artbook") || lowerName.Contains("wallpaper")) {
+			return 220; // Very low priority - extras last
+		}
+
+		// Base game - highest priority
+		return 100;
 	}
 
 	private (bool Valid, string? ErrorMessage) CheckValidation() => GamesToRedeemInBackground.Any(static entry => !IsValidGameToRedeemInBackground(entry.Key, entry.Value)) ? (false, Strings.FormatErrorConfigPropertyInvalid(nameof(GamesToRedeemInBackground), string.Join("", GamesToRedeemInBackground))) : (true, null);
