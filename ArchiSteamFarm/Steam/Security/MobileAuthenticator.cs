@@ -42,15 +42,15 @@ namespace ArchiSteamFarm.Steam.Security;
 
 [SuppressMessage("ReSharper", "ClassCannotBeInstantiated")]
 public sealed class MobileAuthenticator : IDisposable {
-	internal const byte BackupCodeDigits = 7;
-	internal const byte CodeDigits = 5;
+	internal const byte BackupCodeDigits = 8;
+	internal const byte CodeDigits = 6;
 
 	private const byte CodeInterval = 30;
 
 	// For how many minutes we can assume that SteamTimeDifference is correct
 	private const byte SteamTimeTTL = 15;
 
-	internal static readonly ImmutableSortedSet<char> CodeCharacters = ['2', '3', '4', '5', '6', '7', '8', '9', 'B', 'C', 'D', 'F', 'G', 'H', 'J', 'K', 'M', 'N', 'P', 'Q', 'R', 'T', 'V', 'W', 'X', 'Y'];
+	internal static readonly ImmutableSortedSet<char> CodeCharacters = ['2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
 
 	private static readonly SemaphoreSlim TimeSemaphore = new(1, 1);
 

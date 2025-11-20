@@ -971,7 +971,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				break;
 			case ASF.EUserInputType.SteamGuard:
-				if (inputValue.Length != 5) {
+				if (inputValue.Length != MobileAuthenticator.CodeDigits) {
+					return false;
+				}
+
+				inputValue = inputValue.ToUpperInvariant();
+
+				if (inputValue.Any(static character => !MobileAuthenticator.CodeCharacters.Contains(character))) {
 					return false;
 				}
 
