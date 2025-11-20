@@ -33,11 +33,14 @@ namespace ArchiSteamFarm.NLog.Targets;
 
 [Target("History")]
 internal sealed class HistoryTarget : TargetWithLayout {
-	private const byte DefaultMaxCount = 20;
+	private const byte DefaultMaxCount = 50;
+	private const LogLevel DefaultMinLevel = LogLevel.Info;
 
 	internal IEnumerable<string> ArchivedMessages => HistoryQueue;
 
 	private readonly FixedSizeConcurrentQueue<string> HistoryQueue = new(DefaultMaxCount);
+
+	private LogLevel MinLevel = DefaultMinLevel;
 
 	// This is NLog config property, it must have public get() and set() capabilities
 	[UsedImplicitly]
@@ -55,6 +58,24 @@ internal sealed class HistoryTarget : TargetWithLayout {
 		}
 	}
 
+	// This is NLog config property, it must have public get() and set() capabilities
+	[UsedImplicitly]
+	public string MinimumLevel {
+		get => MinLevel.Name;
+
+		set {
+			LogLevel? parsedLevel = LogLevel.FromString(value);
+
+			if (parsedLevel == null) {
+				ASF.ArchiLogger.LogNullError(value);
+
+				return;
+			}
+
+			MinLevel = parsedLevel;
+		}
+	}
+
 	// This parameter-less constructor is intentionally public, as NLog uses it for creating targets
 	// It must stay like this as we want to have our targets defined in our NLog.config
 	[UsedImplicitly]
@@ -64,6 +85,11 @@ internal sealed class HistoryTarget : TargetWithLayout {
 
 	protected override void Write(LogEventInfo logEvent) {
 		ArgumentNullException.ThrowIfNull(logEvent);
+
+		// Filter messages based on minimum log level
+		if (logEvent.Level < MinLevel) {
+			return;
+		}
 
 		base.Write(logEvent);
 

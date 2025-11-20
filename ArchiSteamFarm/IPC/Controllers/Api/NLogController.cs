@@ -56,6 +56,23 @@ public sealed class NLogController : ArchiController {
 		ApplicationLifetime = applicationLifetime;
 	}
 
+	[EndpointSummary("Retrieves the current history logging configuration including maxCount and minimum log level")]
+	[HttpGet("Config")]
+	[ProducesResponseType<GenericResponse<Dictionary<string, object>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.ServiceUnavailable)]
+	public ActionResult<GenericResponse> ConfigGet() {
+		if (ArchiKestrel.HistoryTarget == null) {
+			return StatusCode((int) HttpStatusCode.ServiceUnavailable, new GenericResponse(false, Strings.WarningFailed));
+		}
+
+		Dictionary<string, object> config = new() {
+			{ "MaxCount", ArchiKestrel.HistoryTarget.MaxCount },
+			{ "MinimumLevel", ArchiKestrel.HistoryTarget.MinimumLevel }
+		};
+
+		return Ok(new GenericResponse<Dictionary<string, object>>(config));
+	}
+
 	[EndpointSummary("Fetches ASF log file, this works on assumption that the log file is in fact generated, as user could disable it through custom configuration")]
 	[HttpGet("File")]
 	[ProducesResponseType<GenericResponse<GenericResponse<LogResponse>>>((int) HttpStatusCode.OK)]

@@ -290,7 +290,8 @@ internal static class Logging {
 		if ((historyTarget == null) && !IsUsingCustomConfiguration) {
 			historyTarget = new HistoryTarget("History") {
 				Layout = GeneralLayout,
-				MaxCount = 20
+				MaxCount = 50,
+				MinimumLevel = "Info"
 			};
 
 			InitializeTarget(LogManager.Configuration, historyTarget);
