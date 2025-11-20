@@ -94,6 +94,9 @@ public sealed class GlobalConfig {
 	public const ArchiCryptoHelper.EHashingMethod DefaultIPCPasswordFormat = ArchiCryptoHelper.EHashingMethod.PlainText;
 
 	[PublicAPI]
+	public const ArchiCryptoHelper.ESecurityLevel DefaultSecurityLevel = ArchiCryptoHelper.ESecurityLevel.Enhanced;
+
+	[PublicAPI]
 	public const byte DefaultLoginLimiterDelay = 10;
 
 	[PublicAPI]
@@ -258,6 +261,9 @@ public sealed class GlobalConfig {
 
 	[JsonInclude]
 	public ArchiCryptoHelper.EHashingMethod IPCPasswordFormat { get; init; } = DefaultIPCPasswordFormat;
+
+	[JsonInclude]
+	public ArchiCryptoHelper.ESecurityLevel SecurityLevel { get; init; } = DefaultSecurityLevel;
 
 	[JsonConverter(typeof(GuidJsonConverter))]
 	[JsonInclude]

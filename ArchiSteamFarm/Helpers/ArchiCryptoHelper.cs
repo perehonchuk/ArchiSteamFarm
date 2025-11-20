@@ -41,10 +41,17 @@ public static class ArchiCryptoHelper {
 	private const byte DefaultHashLength = 32;
 	private const byte MinimumRecommendedCryptKeyBytes = 32;
 	private const ushort SteamParentalPbkdf2Iterations = 10000;
+
+	// Enhanced SCrypt parameters for improved security
 	private const byte SteamParentalSCryptBlocksCount = 8;
 	private const ushort SteamParentalSCryptIterations = 8192;
+	private const byte EnhancedSCryptBlocksCount = 16;
+	private const uint EnhancedSCryptIterations = 32768;
+	private const byte StrongSCryptBlocksCount = 32;
+	private const uint StrongSCryptIterations = 65536;
 
 	internal static bool HasDefaultCryptKey { get; private set; } = true;
+	internal static ESecurityLevel CurrentSecurityLevel { get; private set; } = ESecurityLevel.Enhanced;
 
 	private static IEnumerable<byte> SteamParentalCharacters => Enumerable.Range('0', 10).Select(static character => (byte) character);
 
@@ -126,10 +133,22 @@ public static class ArchiCryptoHelper {
 
 		return hashingMethod switch {
 			EHashingMethod.PlainText => password,
-			EHashingMethod.SCrypt => SCrypt.ComputeDerivedKey(password, salt, SteamParentalSCryptIterations, SteamParentalSCryptBlocksCount, 1, null, hashLength),
+			EHashingMethod.SCrypt => ComputeSCryptHash(password, salt, hashLength),
 			EHashingMethod.Pbkdf2 => Rfc2898DeriveBytes.Pbkdf2(password, salt, SteamParentalPbkdf2Iterations, HashAlgorithmName.SHA256, hashLength),
 			_ => throw new InvalidOperationException(nameof(hashingMethod))
 		};
+	}
+
+	private static byte[] ComputeSCryptHash(byte[] password, byte[] salt, byte hashLength) {
+		// Select SCrypt parameters based on current security level
+		(int iterations, int blocks) = CurrentSecurityLevel switch {
+			ESecurityLevel.Standard => (SteamParentalSCryptIterations, SteamParentalSCryptBlocksCount),
+			ESecurityLevel.Enhanced => ((int) EnhancedSCryptIterations, EnhancedSCryptBlocksCount),
+			ESecurityLevel.Strong => ((int) StrongSCryptIterations, StrongSCryptBlocksCount),
+			_ => (SteamParentalSCryptIterations, SteamParentalSCryptBlocksCount)
+		};
+
+		return SCrypt.ComputeDerivedKey(password, salt, iterations, blocks, 1, null, hashLength);
 	}
 
 	internal static bool HasTransformation(this ECryptoMethod cryptoMethod) =>
@@ -178,6 +197,21 @@ public static class ArchiCryptoHelper {
 
 		HasDefaultCryptKey = encryptionKey.SequenceEqual(EncryptionKey);
 		EncryptionKey = encryptionKey;
+
+		// Automatically select security level based on key length
+		CurrentSecurityLevel = encryptionKey.Length switch {
+			>= 64 => ESecurityLevel.Strong,
+			>= 48 => ESecurityLevel.Enhanced,
+			_ => ESecurityLevel.Standard
+		};
+	}
+
+	internal static void SetSecurityLevel(ESecurityLevel securityLevel) {
+		if (!Enum.IsDefined(securityLevel)) {
+			throw new InvalidEnumArgumentException(nameof(securityLevel), (int) securityLevel, typeof(ESecurityLevel));
+		}
+
+		CurrentSecurityLevel = securityLevel;
 	}
 
 	internal static bool VerifyHash(EHashingMethod hashingMethod, string text, string hash) {
@@ -328,5 +362,11 @@ public static class ArchiCryptoHelper {
 		PlainText,
 		SCrypt,
 		Pbkdf2
+	}
+
+	public enum ESecurityLevel : byte {
+		Standard,
+		Enhanced,
+		Strong
 	}
 }

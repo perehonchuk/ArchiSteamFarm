@@ -117,6 +117,9 @@ public static class ASF {
 			throw new InvalidOperationException(nameof(GlobalConfig));
 		}
 
+		// Apply security level from configuration
+		ArchiCryptoHelper.SetSecurityLevel(GlobalConfig.SecurityLevel);
+
 		WebBrowser = new WebBrowser(ArchiLogger, GlobalConfig.WebProxy, true);
 
 		if (!await PluginsCore.InitPlugins().ConfigureAwait(false)) {
