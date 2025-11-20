@@ -86,6 +86,36 @@ internal sealed class BotCache : SerializableFile {
 		}
 	}
 
+	[JsonInclude]
+	[JsonPropertyName("BackingLastSuccessfulTrade")]
+	internal DateTime? LastSuccessfulTrade {
+		get;
+
+		set {
+			if (field == value) {
+				return;
+			}
+
+			field = value;
+			Utilities.InBackground(Save);
+		}
+	}
+
+	[JsonInclude]
+	[JsonPropertyName("BackingConsecutiveEmptyMatches")]
+	internal byte ConsecutiveEmptyMatches {
+		get;
+
+		set {
+			if (field == value) {
+				return;
+			}
+
+			field = value;
+			Utilities.InBackground(Save);
+		}
+	}
+
 	private BotCache(string filePath) : this() {
 		ArgumentException.ThrowIfNullOrEmpty(filePath);
 
@@ -106,6 +136,12 @@ internal sealed class BotCache : SerializableFile {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeLastRequestAt() => LastRequestAt.HasValue;
+
+	[UsedImplicitly]
+	public bool ShouldSerializeLastSuccessfulTrade() => LastSuccessfulTrade.HasValue;
+
+	[UsedImplicitly]
+	public bool ShouldSerializeConsecutiveEmptyMatches() => ConsecutiveEmptyMatches > 0;
 
 	protected override void Dispose(bool disposing) {
 		if (disposing) {

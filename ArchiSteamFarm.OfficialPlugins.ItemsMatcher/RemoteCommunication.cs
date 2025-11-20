@@ -61,6 +61,10 @@ internal sealed class RemoteCommunication : IAsyncDisposable, IDisposable {
 	private const byte MinimumPasswordResetCooldownDays = 5; // As imposed by Steam limits
 	private const byte MinimumSteamGuardEnabledDays = 15; // As imposed by Steam limits
 	private const byte MinPersonaStateTTL = MinAnnouncementTTL; // Minimum amount of minutes we must wait before requesting persona state update
+	private const byte MatchActivelyShortIntervalHours = 3; // Interval when recent successful trades occurred
+	private const byte MatchActivelyStandardIntervalHours = 6; // Standard interval for matching
+	private const byte MatchActivelyLongIntervalHours = 12; // Interval when no successful trades for extended period
+	private const byte SuccessfulTradeActivityWindowHours = 24; // Time window to consider for recent trade activity
 
 	private static readonly FrozenSet<EAssetType> AcceptedMatchableTypes = [
 		EAssetType.Emoticon,
@@ -104,11 +108,14 @@ internal sealed class RemoteCommunication : IAsyncDisposable, IDisposable {
 
 		if (Bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.MatchActively)) {
 			if ((ASF.GlobalConfig?.LicenseID != null) && (ASF.GlobalConfig.LicenseID != Guid.Empty)) {
+				// Initialize with standard interval, will adapt based on trading activity
+				TimeSpan initialInterval = TimeSpan.FromHours(MatchActivelyStandardIntervalHours);
+
 				MatchActivelyTimer = new Timer(
 					MatchActively,
 					null,
 					TimeSpan.FromHours(1) + TimeSpan.FromSeconds(ASF.LoadBalancingDelay * Bot.Bots?.Count ?? 0),
-					TimeSpan.FromHours(6)
+					initialInterval
 				);
 			} else {
 				bot.ArchiLogger.LogGenericError(Strings.FormatWarningNoLicense(nameof(BotConfig.ETradingPreferences.MatchActively)));
@@ -785,9 +792,32 @@ internal sealed class RemoteCommunication : IAsyncDisposable, IDisposable {
 		} else {
 			// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
 			lock (MatchActivelySemaphore) {
-				MatchActivelyTimer.Change(TimeSpan.Zero, TimeSpan.FromHours(6));
+				TimeSpan nextInterval = CalculateAdaptiveMatchingInterval();
+				MatchActivelyTimer.Change(TimeSpan.Zero, nextInterval);
 			}
 		}
+	}
+
+	private TimeSpan CalculateAdaptiveMatchingInterval() {
+		// Adaptive matching interval based on trade activity and success patterns
+		DateTime lastSuccessfulTrade = BotCache?.LastSuccessfulTrade ?? DateTime.MinValue;
+		byte consecutiveEmptyMatches = BotCache?.ConsecutiveEmptyMatches ?? 0;
+		TimeSpan timeSinceLastSuccessfulTrade = DateTime.UtcNow - lastSuccessfulTrade;
+
+		// If we had successful trades recently (within 24 hours), check more frequently
+		if (timeSinceLastSuccessfulTrade.TotalHours < SuccessfulTradeActivityWindowHours && consecutiveEmptyMatches < 3) {
+			Bot.ArchiLogger.LogGenericTrace($"Using short matching interval ({MatchActivelyShortIntervalHours}h) due to recent successful trades");
+			return TimeSpan.FromHours(MatchActivelyShortIntervalHours);
+		}
+
+		// If we haven't had successful trades for a while, reduce frequency to save resources
+		if (timeSinceLastSuccessfulTrade.TotalHours > SuccessfulTradeActivityWindowHours * 2 || consecutiveEmptyMatches >= 5) {
+			Bot.ArchiLogger.LogGenericTrace($"Using long matching interval ({MatchActivelyLongIntervalHours}h) due to low trade activity");
+			return TimeSpan.FromHours(MatchActivelyLongIntervalHours);
+		}
+
+		// Standard interval for normal trading activity
+		return TimeSpan.FromHours(MatchActivelyStandardIntervalHours);
 	}
 
 	private async Task<bool?> IsEligibleForListing() {
@@ -1151,6 +1181,27 @@ internal sealed class RemoteCommunication : IAsyncDisposable, IDisposable {
 
 			using (await Bot.Actions.GetTradingLock().ConfigureAwait(false)) {
 				tradesSent = await MatchActively(response.Value.Users, assetsForMatching, acceptedMatchableTypes).ConfigureAwait(false);
+			}
+
+			// Update tracking based on matching results
+			BotCache ??= await BotCache.CreateOrLoad(BotCacheFilePath).ConfigureAwait(false);
+
+			if (tradesSent) {
+				BotCache.LastSuccessfulTrade = DateTime.UtcNow;
+				BotCache.ConsecutiveEmptyMatches = 0;
+				Bot.ArchiLogger.LogGenericInfo("Successful trades sent, resetting activity tracking");
+			} else {
+				BotCache.ConsecutiveEmptyMatches++;
+				Bot.ArchiLogger.LogGenericTrace($"No trades sent, consecutive empty matches: {BotCache.ConsecutiveEmptyMatches}");
+			}
+
+			// Adjust timer interval based on activity
+			if (MatchActivelyTimer != null) {
+				lock (MatchActivelySemaphore) {
+					TimeSpan nextInterval = CalculateAdaptiveMatchingInterval();
+					MatchActivelyTimer.Change(nextInterval, nextInterval);
+					Bot.ArchiLogger.LogGenericInfo($"Next MatchActively run scheduled in {nextInterval.TotalHours:F1} hours");
+				}
 			}
 
 			Bot.ArchiLogger.LogGenericInfo(Strings.Done);
