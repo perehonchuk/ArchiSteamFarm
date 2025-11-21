@@ -79,6 +79,7 @@ EOF
 FROM mcr.microsoft.com/dotnet/aspnet:10.0${IMAGESUFFIX} AS runtime
 ENV ASF_PATH=/app
 ENV ASF_UID=1000
+ENV ASF_GID=1000
 ENV ASPNETCORE_URLS=
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=true
 ENV DOTNET_NOLOGO=true
@@ -101,12 +102,16 @@ RUN <<EOF
 
     mkdir -p "$ASF_PATH"
 
-    if ! id -u "$ASF_UID" >/dev/null 2>&1; then
-        groupadd -r -g "$ASF_UID" "asf"
-        useradd -r -d "$ASF_PATH" -g "$ASF_UID" -u "$ASF_UID" "asf"
+    # Use ASF_GID for group, allowing separate UID and GID configuration
+    if ! getent group "$ASF_GID" >/dev/null 2>&1; then
+        groupadd -r -g "$ASF_GID" "asf"
     fi
 
-    chown -hR "${ASF_UID}:${ASF_UID}" "$ASF_PATH" /asf
+    if ! id -u "$ASF_UID" >/dev/null 2>&1; then
+        useradd -r -d "$ASF_PATH" -g "$ASF_GID" -u "$ASF_UID" "asf"
+    fi
+
+    chown -hR "${ASF_UID}:${ASF_GID}" "$ASF_PATH" /asf
 
     ln -s /asf/ArchiSteamFarm.sh /usr/bin/ArchiSteamFarm
 EOF

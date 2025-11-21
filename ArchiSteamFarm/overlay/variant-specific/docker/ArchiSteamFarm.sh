@@ -65,8 +65,15 @@ done
 BINARY_PREFIX=""
 
 if [ -n "${ASF_UID-}" ] && [ "$(id -u)" -eq 0 ] && id -u "$ASF_UID" >/dev/null 2>&1 && [ "$(id -u "$ASF_UID")" -gt 0 ]; then
+	# Determine the group ID to use - ASF_GID if set, otherwise fall back to ASF_UID
+	if [ -n "${ASF_GID-}" ]; then
+		TARGET_GID="$ASF_GID"
+	else
+		TARGET_GID="$ASF_UID"
+	fi
+
 	# Fix permissions first to ensure ASF has read/write access to the directory specified by --path and its own
-	chown -hR "${ASF_UID}:${ASF_UID}" . "$SCRIPT_DIR" || true
+	chown -hR "${ASF_UID}:${TARGET_GID}" . "$SCRIPT_DIR" || true
 
 	BINARY_PREFIX="su $(id -nu "$ASF_UID") -c"
 fi
