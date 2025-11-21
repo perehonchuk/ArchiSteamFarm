@@ -625,4 +625,13 @@ public sealed class BotController : ArchiController {
 
 		return new BotRemoveLicenseResponse(apps, packages);
 	}
+
+	[EndpointSummary("Returns list of all supported bot group selectors")]
+	[HttpGet("Groups")]
+	[ProducesResponseType<GenericResponse<ImmutableHashSet<string>>>((int) HttpStatusCode.OK)]
+	public ActionResult<GenericResponse> GetBotGroups() {
+		ImmutableHashSet<string> groups = Bot.GetSupportedBotGroups();
+
+		return Ok(new GenericResponse<ImmutableHashSet<string>>(groups));
+	}
 }
