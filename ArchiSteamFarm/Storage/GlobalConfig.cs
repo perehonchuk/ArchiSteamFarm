@@ -109,6 +109,9 @@ public sealed class GlobalConfig {
 	public const EOptimizationMode DefaultOptimizationMode = EOptimizationMode.MaxPerformance;
 
 	[PublicAPI]
+	public const bool DefaultIsolateRateLimiters = false;
+
+	[PublicAPI]
 	public const EPluginsUpdateMode DefaultPluginsUpdateMode = EPluginsUpdateMode.Whitelist;
 
 	[PublicAPI]
@@ -244,6 +247,9 @@ public sealed class GlobalConfig {
 
 	[JsonInclude]
 	public bool IPC { get; init; } = DefaultIPC;
+
+	[JsonInclude]
+	public bool IsolateRateLimiters { get; init; } = DefaultIsolateRateLimiters;
 
 	[JsonInclude]
 	[SwaggerSecurityCritical]
@@ -413,6 +419,9 @@ public sealed class GlobalConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeIPC() => !Saving || (IPC != DefaultIPC);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeIsolateRateLimiters() => !Saving || (IsolateRateLimiters != DefaultIsolateRateLimiters);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeIPCPassword() => Saving && IsIPCPasswordSet && (IPCPassword != DefaultIPCPassword);

@@ -72,7 +72,11 @@ public static class PluginsCore {
 		// The only purpose of using hashing here is to cut on a potential size of the resource name - paths can be really long, and we almost certainly have some upper limit on the resource name we can allocate
 		// At the same time it'd be the best if we avoided all special characters, such as '/' found e.g. in base64, as we can't be sure that it's not a prohibited character in regards to native OS implementation
 		// Because of that, SHA256 is sufficient for our case, as it generates alphanumeric characters only, and is barely 256-bit long. We don't need any kind of complex cryptography or collision detection here, any hashing will do, and the shorter the better
-		if (!string.IsNullOrEmpty(Program.NetworkGroup)) {
+		if (ASF.GlobalConfig.IsolateRateLimiters) {
+			// When rate limiter isolation is enabled, each ASF instance uses its own unique identifier based on process ID and start time
+			string instanceIdentifier = $"{Environment.ProcessId}-{Environment.TickCount64}";
+			objectName += $"-isolated-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(instanceIdentifier)))}";
+		} else if (!string.IsNullOrEmpty(Program.NetworkGroup)) {
 			objectName += $"-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Program.NetworkGroup)))}";
 		} else if (!string.IsNullOrEmpty(ASF.GlobalConfig.WebProxyText)) {
 			objectName += $"-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ASF.GlobalConfig.WebProxyText)))}";

@@ -34,6 +34,7 @@ namespace ArchiSteamFarm.Helpers;
 
 internal sealed class CrossProcessFileBasedSemaphore : IAsyncDisposable, ICrossProcessSemaphore, IDisposable {
 	private const byte SpinLockDelay = 200; // In milliseconds
+	private const string IsolatedLockSubdirectory = "isolated";
 
 	private readonly string FilePath;
 	private readonly SemaphoreSlim LocalSemaphore = new(1, 1);
@@ -43,7 +44,16 @@ internal sealed class CrossProcessFileBasedSemaphore : IAsyncDisposable, ICrossP
 	internal CrossProcessFileBasedSemaphore(string name) {
 		ArgumentException.ThrowIfNullOrEmpty(name);
 
-		FilePath = Path.Combine(Path.GetTempPath(), SharedInfo.ASF, name);
+		// Check if this is an isolated semaphore (contains "-isolated-" in the name)
+		// Isolated semaphores use a separate subdirectory to completely avoid conflicts
+		bool isIsolated = name.Contains("-isolated-", StringComparison.Ordinal);
+		string baseDirectory = Path.Combine(Path.GetTempPath(), SharedInfo.ASF);
+
+		if (isIsolated) {
+			FilePath = Path.Combine(baseDirectory, IsolatedLockSubdirectory, name);
+		} else {
+			FilePath = Path.Combine(baseDirectory, name);
+		}
 	}
 
 	public void Dispose() {
