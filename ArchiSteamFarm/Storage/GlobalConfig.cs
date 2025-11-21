@@ -73,6 +73,9 @@ public sealed class GlobalConfig {
 	public const bool DefaultFilterBadBots = true;
 
 	[PublicAPI]
+	public const bool DefaultFilterBadBotsOfflineFirst = true;
+
+	[PublicAPI]
 	public const byte DefaultGiftsLimiterDelay = 1;
 
 	[PublicAPI]
@@ -226,6 +229,13 @@ public sealed class GlobalConfig {
 
 	[JsonInclude]
 	public bool FilterBadBots { get; init; } = DefaultFilterBadBots;
+
+	[JsonInclude]
+	public bool FilterBadBotsOfflineFirst { get; init; } = DefaultFilterBadBotsOfflineFirst;
+
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	public ImmutableHashSet<ulong> LocalBlockedSteamIDs { get; init; } = ImmutableHashSet<ulong>.Empty;
 
 	[JsonInclude]
 	[Range(byte.MinValue, byte.MaxValue)]
@@ -398,6 +408,12 @@ public sealed class GlobalConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeFilterBadBots() => !Saving || (FilterBadBots != DefaultFilterBadBots);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeFilterBadBotsOfflineFirst() => !Saving || (FilterBadBotsOfflineFirst != DefaultFilterBadBotsOfflineFirst);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeLocalBlockedSteamIDs() => !Saving || (LocalBlockedSteamIDs.Count > 0);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeGiftsLimiterDelay() => !Saving || (GiftsLimiterDelay != DefaultGiftsLimiterDelay);

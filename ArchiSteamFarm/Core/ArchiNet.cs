@@ -33,6 +33,7 @@ using AngleSharp.Dom;
 using ArchiSteamFarm.Helpers;
 using ArchiSteamFarm.IPC.Responses;
 using ArchiSteamFarm.Steam;
+using ArchiSteamFarm.Storage;
 using ArchiSteamFarm.Steam.Integration;
 using ArchiSteamFarm.Web;
 using ArchiSteamFarm.Web.Responses;
@@ -75,6 +76,20 @@ internal static class ArchiNet {
 	internal static async Task<bool?> IsBadBot(ulong steamID, CancellationToken cancellationToken = default) {
 		if ((steamID == 0) || !new SteamID(steamID).IsIndividualAccount) {
 			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		// Check local blocklist first if enabled (offline-first mode)
+		// This allows users to block specific SteamIDs without server communication
+		if (ASF.GlobalConfig?.FilterBadBotsOfflineFirst ?? GlobalConfig.DefaultFilterBadBotsOfflineFirst) {
+			ImmutableHashSet<ulong>? localBlockedSteamIDs = ASF.GlobalConfig?.LocalBlockedSteamIDs;
+
+			if ((localBlockedSteamIDs != null) && (localBlockedSteamIDs.Count > 0)) {
+				if (localBlockedSteamIDs.Contains(steamID)) {
+					ASF.ArchiLogger.LogGenericDebug($"SteamID {steamID} is in local blocklist, skipping server check");
+
+					return true;
+				}
+			}
 		}
 
 		(_, IReadOnlyCollection<ulong>? badBots) = await CachedBadBots.GetValue(ECacheFallback.FailedNow, cancellationToken).ConfigureAwait(false);

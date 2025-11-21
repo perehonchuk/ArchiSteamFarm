@@ -23,6 +23,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -439,6 +440,15 @@ public sealed class Trading : IDisposable {
 
 			// Deny trades from bad steamIDs if user wishes to do so
 			if (ASF.GlobalConfig?.FilterBadBots ?? GlobalConfig.DefaultFilterBadBots) {
+				// Check local blocklist first (offline-first) - immediate rejection without server call
+				ImmutableHashSet<ulong>? localBlockedSteamIDs = ASF.GlobalConfig?.LocalBlockedSteamIDs;
+
+				if ((localBlockedSteamIDs != null) && localBlockedSteamIDs.Contains(tradeOffer.OtherSteamID64)) {
+					Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Blacklisted, $"{nameof(tradeOffer.OtherSteamID64)} {tradeOffer.OtherSteamID64} in local blocklist"));
+
+					return ParseTradeResult.EResult.Blacklisted;
+				}
+
 				// Keep short timeout allowed for this call, as we don't want to hold the flow for too long
 				using CancellationTokenSource archiNetCancellation = new(TimeSpan.FromSeconds(15));
 
