@@ -25,11 +25,14 @@ namespace ArchiSteamFarm.OfficialPlugins.SteamTokenDumper;
 
 internal static class SharedInfo {
 	internal const byte ApiVersion = 2;
-	internal const byte HoursBetweenUploads = 24;
+	internal const byte HoursBetweenUploads = 12; // Base interval, actual interval is adaptive based on data availability
+	internal const byte HoursBetweenUploadsExtended = 18; // Extended interval when no new data is available
+	internal const byte HoursBetweenUploadsReduced = 6; // Reduced interval when significant new data is detected
 	internal const byte MaximumHoursBetweenRefresh = 8; // Per single bot account, makes sense to be 2 or 3 times less than MinimumHoursBetweenUploads
-	internal const byte MaximumMinutesBeforeFirstUpload = 60; // Must be greater or equal to MinimumMinutesBeforeFirstUpload
-	internal const byte MinimumMinutesBeforeFirstUpload = 10; // Must be less or equal to MaximumMinutesBeforeFirstUpload
+	internal const byte MaximumMinutesBeforeFirstUpload = 30; // Must be greater or equal to MinimumMinutesBeforeFirstUpload (reduced from 60)
+	internal const byte MinimumMinutesBeforeFirstUpload = 5; // Must be less or equal to MaximumMinutesBeforeFirstUpload (reduced from 10)
 	internal const byte MinimumMinutesBetweenUploads = 5; // Rate limiting for the server
+	internal const ushort SignificantNewDataThreshold = 100; // Number of new items that triggers reduced submission interval
 	internal const string ServerURL = "https://tokendumper-asf.steamdb.info";
 	internal const string Token = "STEAM_TOKEN_DUMPER_TOKEN"; // This is filled automatically during our CI build with API key provided by xPaw for ASF project
 

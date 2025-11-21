@@ -62,6 +62,8 @@ internal sealed class SteamTokenDumperPlugin : OfficialPlugin, IASF, IBot, IBotC
 
 	private static GlobalCache? GlobalCache;
 	private static DateTimeOffset LastUploadAt = DateTimeOffset.MinValue;
+	private static uint ConsecutiveEmptySubmissions;
+	private static uint LastSubmissionDataCount;
 
 	[JsonInclude]
 	public override string Name => nameof(SteamTokenDumperPlugin);
@@ -602,6 +604,21 @@ internal sealed class SteamTokenDumperPlugin : OfficialPlugin, IASF, IBot, IBotC
 			if ((appTokens.Count == 0) && (packageTokens.Count == 0) && (depotKeys.Count == 0)) {
 				ASF.ArchiLogger.LogGenericInfo(Strings.SubmissionNoNewData);
 
+				ConsecutiveEmptySubmissions++;
+				LastSubmissionDataCount = 0;
+
+				// Adjust next submission interval based on consecutive empty submissions
+				if ((Config?.Enabled == true) && (ConsecutiveEmptySubmissions >= 3)) {
+					TimeSpan extendedInterval = TimeSpan.FromHours(SharedInfo.HoursBetweenUploadsExtended);
+
+					// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
+					lock (SubmissionSemaphore) {
+						SubmissionTimer.Change(extendedInterval, extendedInterval);
+					}
+
+					ASF.ArchiLogger.LogGenericInfo($"Extended submission interval to {extendedInterval.TotalHours} hours due to {ConsecutiveEmptySubmissions} consecutive empty submissions");
+				}
+
 				return;
 			}
 
@@ -680,6 +697,33 @@ internal sealed class SteamTokenDumperPlugin : OfficialPlugin, IASF, IBot, IBotC
 			ASF.ArchiLogger.LogGenericInfo(Strings.FormatSubmissionSuccessful(response.Content.Data.NewApps.Count, response.Content.Data.VerifiedApps.Count, response.Content.Data.NewPackages.Count, response.Content.Data.VerifiedPackages.Count, response.Content.Data.NewDepots.Count, response.Content.Data.VerifiedDepots.Count));
 
 			GlobalCache.UpdateSubmittedData(appTokens, packageTokens, depotKeys);
+
+			// Track submission statistics for adaptive scheduling
+			uint totalNewItems = (uint) (response.Content.Data.NewApps.Count + response.Content.Data.NewPackages.Count + response.Content.Data.NewDepots.Count);
+			ConsecutiveEmptySubmissions = 0;
+			LastSubmissionDataCount = totalNewItems;
+
+			// Adjust next submission interval based on amount of new data
+			if (Config?.Enabled == true) {
+				TimeSpan nextInterval;
+
+				if (totalNewItems >= SharedInfo.SignificantNewDataThreshold) {
+					// Significant new data detected, use reduced interval
+					nextInterval = TimeSpan.FromHours(SharedInfo.HoursBetweenUploadsReduced);
+					ASF.ArchiLogger.LogGenericInfo($"Reduced submission interval to {nextInterval.TotalHours} hours due to {totalNewItems} new items submitted");
+				} else if (totalNewItems > 0) {
+					// Normal data, use base interval
+					nextInterval = TimeSpan.FromHours(SharedInfo.HoursBetweenUploads);
+				} else {
+					// No new items (only verified), use extended interval
+					nextInterval = TimeSpan.FromHours(SharedInfo.HoursBetweenUploadsExtended);
+				}
+
+				// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
+				lock (SubmissionSemaphore) {
+					SubmissionTimer.Change(nextInterval, nextInterval);
+				}
+			}
 
 			if (!response.Content.Data.NewApps.IsEmpty) {
 				ASF.ArchiLogger.LogGenericInfo(Strings.FormatSubmissionSuccessfulNewApps(string.Join(", ", response.Content.Data.NewApps)));
