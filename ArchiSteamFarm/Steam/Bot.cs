@@ -180,6 +180,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private readonly SemaphoreSlim SendCompleteTypesSemaphore = new(1, 1);
 	private readonly SteamClient SteamClient;
 	private readonly ConcurrentHashSet<ulong> SteamFamilySharingIDs = [];
+	private readonly ConcurrentDictionary<ulong, DateTime> SteamFamilySharingVerificationTime = new();
+	private readonly ConcurrentDictionary<ulong, byte> SteamFamilySharingTrustScore = new();
+
+	// Family sharing verification constants
+	private const byte FamilySharingMaxTrustScore = 10;
+	private const byte FamilySharingInitialTrustScore = 0;
+
+	private static byte FamilySharingMinTrustScore => ASF.GlobalConfig?.FamilySharingTrustDays ?? GlobalConfig.DefaultFamilySharingTrustDays;
+	private static bool FamilySharingTrustVerificationEnabled => ASF.GlobalConfig?.FamilySharingTrustVerification ?? GlobalConfig.DefaultFamilySharingTrustVerification;
 	private readonly SteamUser SteamUser;
 	private readonly SemaphoreSlim UnpackBoosterPacksSemaphore = new(1, 1);
 
@@ -501,7 +510,23 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			};
 		}
 
-		return SteamFamilySharingIDs.Contains(steamID) ? EAccess.FamilySharing : EAccess.None;
+		if (!SteamFamilySharingIDs.Contains(steamID)) {
+			return EAccess.None;
+		}
+
+		// If trust verification is disabled, grant immediate access
+		if (!FamilySharingTrustVerificationEnabled) {
+			return EAccess.FamilySharing;
+		}
+
+		// Check if user has met the minimum trust score requirement for family sharing access
+		if (!SteamFamilySharingTrustScore.TryGetValue(steamID, out byte trustScore) || trustScore < FamilySharingMinTrustScore) {
+			ArchiLogger.LogGenericDebug($"Family sharing user {steamID} has not yet met trust score requirement ({trustScore}/{FamilySharingMinTrustScore})");
+
+			return EAccess.None;
+		}
+
+		return EAccess.FamilySharing;
 	}
 
 	[PublicAPI]
@@ -2439,12 +2464,53 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		SteamFamilySharingIDs.Clear();
 
+		HashSet<ulong> allFamilyMembers = [];
+
 		if (steamIDs is { Count: > 0 }) {
 			SteamFamilySharingIDs.UnionWith(steamIDs);
+			allFamilyMembers.UnionWith(steamIDs);
 		}
 
 		if (oldSteamIDs is { Count: > 0 }) {
 			SteamFamilySharingIDs.UnionWith(oldSteamIDs);
+			allFamilyMembers.UnionWith(oldSteamIDs);
+		}
+
+		// Initialize and update trust scores for family sharing members
+		DateTime currentTime = DateTime.UtcNow;
+
+		foreach (ulong familyMemberID in allFamilyMembers) {
+			if (!SteamFamilySharingVerificationTime.TryGetValue(familyMemberID, out DateTime firstSeen)) {
+				// New family member, initialize tracking
+				SteamFamilySharingVerificationTime[familyMemberID] = currentTime;
+				SteamFamilySharingTrustScore[familyMemberID] = FamilySharingInitialTrustScore;
+
+				ArchiLogger.LogGenericInfo($"New family sharing member detected: {familyMemberID}, starting trust verification");
+
+				continue;
+			}
+
+			// Increment trust score based on time since first seen (each day adds 1 point)
+			TimeSpan membershipDuration = currentTime - firstSeen;
+			byte calculatedTrustScore = (byte)Math.Min(membershipDuration.Days + 1, FamilySharingMaxTrustScore);
+
+			SteamFamilySharingTrustScore[familyMemberID] = calculatedTrustScore;
+
+			if (calculatedTrustScore >= FamilySharingMinTrustScore) {
+				ArchiLogger.LogGenericDebug($"Family member {familyMemberID} has sufficient trust score: {calculatedTrustScore}");
+			} else {
+				ArchiLogger.LogGenericDebug($"Family member {familyMemberID} trust score: {calculatedTrustScore}/{FamilySharingMinTrustScore}, access pending");
+			}
+		}
+
+		// Clean up trust data for users no longer in family sharing
+		foreach (ulong trackedID in SteamFamilySharingVerificationTime.Keys.ToList()) {
+			if (!allFamilyMembers.Contains(trackedID)) {
+				SteamFamilySharingVerificationTime.TryRemove(trackedID, out _);
+				SteamFamilySharingTrustScore.TryRemove(trackedID, out _);
+
+				ArchiLogger.LogGenericDebug($"Removed family sharing trust data for {trackedID} (no longer a family member)");
+			}
 		}
 	}
 

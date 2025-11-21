@@ -70,6 +70,12 @@ public sealed class GlobalConfig {
 	public const byte DefaultFarmingDelay = 15;
 
 	[PublicAPI]
+	public const bool DefaultFamilySharingTrustVerification = true;
+
+	[PublicAPI]
+	public const byte DefaultFamilySharingTrustDays = 3;
+
+	[PublicAPI]
 	public const bool DefaultFilterBadBots = true;
 
 	[PublicAPI]
@@ -223,6 +229,13 @@ public sealed class GlobalConfig {
 	[JsonInclude]
 	[Range(1, byte.MaxValue)]
 	public byte FarmingDelay { get; init; } = DefaultFarmingDelay;
+
+	[JsonInclude]
+	public bool FamilySharingTrustVerification { get; init; } = DefaultFamilySharingTrustVerification;
+
+	[JsonInclude]
+	[Range(1, byte.MaxValue)]
+	public byte FamilySharingTrustDays { get; init; } = DefaultFamilySharingTrustDays;
 
 	[JsonInclude]
 	public bool FilterBadBots { get; init; } = DefaultFilterBadBots;
