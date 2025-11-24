@@ -141,6 +141,8 @@ public sealed class Commands {
 						return ResponseFarmingQueue(access);
 					case "HELP":
 						return ResponseHelp(access);
+					case "IDLEALL":
+						return await ResponseIdleAll(access).ConfigureAwait(false);
 					case "INVENTORY":
 						return await ResponseInventory(access).ConfigureAwait(false);
 					case "LEVEL":
@@ -232,6 +234,8 @@ public sealed class Commands {
 						return ResponseFarmingQueueRemove(access, args[1]);
 					case "HASH" when args.Length > 2:
 						return ResponseHash(access, args[1], Utilities.GetArgsAsText(message, 2));
+					case "IDLEALL":
+						return await ResponseIdleAll(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "INPUT" when args.Length > 3:
 						return await ResponseInput(access, args[1], args[2], Utilities.GetArgsAsText(message, 3), steamID).ConfigureAwait(false);
 					case "INPUT" when args.Length > 2:
@@ -1626,6 +1630,48 @@ public sealed class Commands {
 		}
 
 		return access >= EAccess.FamilySharing ? FormatBotResponse($"{SharedInfo.ProjectURL}/wiki/Commands") : null;
+	}
+
+	private async Task<string?> ResponseIdleAll(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		if (Bot.CardsFarmer.Paused) {
+			return FormatBotResponse(Strings.BotAutomaticIdlingPausedAlready);
+		}
+
+		await Bot.CardsFarmer.StartFarmingAllGames().ConfigureAwait(false);
+
+		return FormatBotResponse(Strings.Done);
+	}
+
+	private static async Task<string?> ResponseIdleAll(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseIdleAll(GetProxyAccess(bot, access, steamID)))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
 	}
 
 	private string? ResponseInput(EAccess access, string propertyName, string inputValue) {
@@ -3246,13 +3292,16 @@ public sealed class Commands {
 			return (FormatBotResponse(Strings.BotStatusNotIdling), Bot);
 		}
 
+		uint queuePosition = (uint)(Bot.CardsFarmer.GamesToFarmReadOnly.Count - Bot.CardsFarmer.CurrentGamesFarmingReadOnly.Count + 1);
+		string queueInfo = $" [Queue: {queuePosition}/{Bot.CardsFarmer.GamesToFarmReadOnly.Count}]";
+
 		if (Bot.CardsFarmer.CurrentGamesFarmingReadOnly.Count > 1) {
-			return (FormatBotResponse(Strings.FormatBotStatusIdlingList(string.Join(", ", Bot.CardsFarmer.CurrentGamesFarmingReadOnly.Select(static game => $"{game.AppID} ({game.GameName})")), Bot.CardsFarmer.GamesToFarmReadOnly.Count, Bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining), Bot.CardsFarmer.TimeRemaining.ToHumanReadable())), Bot);
+			return (FormatBotResponse(Strings.FormatBotStatusIdlingList(string.Join(", ", Bot.CardsFarmer.CurrentGamesFarmingReadOnly.Select(static game => $"{game.AppID} ({game.GameName})")), Bot.CardsFarmer.GamesToFarmReadOnly.Count, Bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining), Bot.CardsFarmer.TimeRemaining.ToHumanReadable()) + queueInfo), Bot);
 		}
 
 		Game soloGame = Bot.CardsFarmer.CurrentGamesFarmingReadOnly.First();
 
-		return (FormatBotResponse(Strings.FormatBotStatusIdling(soloGame.AppID, soloGame.GameName, soloGame.CardsRemaining, Bot.CardsFarmer.GamesToFarmReadOnly.Count, Bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining), Bot.CardsFarmer.TimeRemaining.ToHumanReadable())), Bot);
+		return (FormatBotResponse(Strings.FormatBotStatusIdling(soloGame.AppID, soloGame.GameName, soloGame.CardsRemaining, Bot.CardsFarmer.GamesToFarmReadOnly.Count, Bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining), Bot.CardsFarmer.TimeRemaining.ToHumanReadable()) + queueInfo), Bot);
 	}
 
 	private static async Task<string?> ResponseStatus(EAccess access, string botNames, ulong steamID = 0) {

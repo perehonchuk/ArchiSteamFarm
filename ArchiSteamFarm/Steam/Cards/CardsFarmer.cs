@@ -388,6 +388,63 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 	}
 
+	internal async Task StartFarmingAllGames() {
+		if (NowFarming || Paused || !Bot.IsPlayingPossible) {
+			return;
+		}
+
+		if (!Bot.CanReceiveSteamCards) {
+			Bot.ArchiLogger.LogGenericInfo(Strings.NothingToIdle);
+			await Bot.OnFarmingFinished(false).ConfigureAwait(false);
+
+			return;
+		}
+
+		await FarmingInitializationSemaphore.WaitAsync().ConfigureAwait(false);
+
+		try {
+			if (NowFarming || Paused || !Bot.IsPlayingPossible) {
+				return;
+			}
+
+			bool? isAnythingToFarm = await IsAnythingToFarm().ConfigureAwait(false);
+
+			if (!isAnythingToFarm.HasValue) {
+				return;
+			}
+
+			if (!isAnythingToFarm.Value) {
+				Bot.ArchiLogger.LogGenericInfo(Strings.NothingToIdle);
+				await Bot.OnFarmingFinished(false).ConfigureAwait(false);
+
+				return;
+			}
+
+			if (GamesToFarm.Count == 0) {
+				Bot.ArchiLogger.LogNullError(GamesToFarm);
+
+				return;
+			}
+
+			// Bypass normal farming orders and farm all games simultaneously
+			GamesToFarm.SortBy(BotConfig.EFarmingOrder.Random);
+
+			// This is the last moment for final check if we can farm
+			if (Paused || !Bot.IsPlayingPossible) {
+				Bot.ArchiLogger.LogGenericInfo(Strings.PlayingNotAvailable);
+
+				return;
+			}
+
+			NowFarming = true;
+			Utilities.InBackground(FarmAllAtOnce, true);
+
+			await PluginsCore.OnBotFarmingStarted(Bot).ConfigureAwait(false);
+		} finally {
+			FarmingInitializationSemaphore.Release();
+		}
+	}
+
 	internal async Task StopFarming() {
 		if (!NowFarming) {
 			return;
@@ -873,6 +930,38 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 				}
 			}
 		} while ((await IsAnythingToFarm().ConfigureAwait(false)).GetValueOrDefault());
+
+		NowFarming = false;
+
+		Bot.ArchiLogger.LogGenericInfo(Strings.IdlingFinished);
+		await Bot.OnFarmingFinished(true).ConfigureAwait(false);
+	}
+
+	private async Task FarmAllAtOnce() {
+		Bot.ArchiLogger.LogGenericInfo(Strings.FormatGamesToIdle(GamesToFarm.Count, GamesToFarm.Sum(static game => game.CardsRemaining), TimeRemaining.ToHumanReadable()));
+		Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("IdleAll"));
+
+		while (GamesToFarm.Count > 0) {
+			HashSet<Game> gamesToFarmNow = GamesToFarm.Take(ArchiHandler.MaxGamesPlayedConcurrently).ToHashSet();
+
+			foreach (Game game in gamesToFarmNow.ToList()) {
+				if (!await IsPlayableGame(game).ConfigureAwait(false)) {
+					GamesToFarm.Remove(game);
+					gamesToFarmNow.Remove(game);
+				}
+			}
+
+			if (gamesToFarmNow.Count == 0) {
+				break;
+			}
+
+			if (!await FarmMultiple(gamesToFarmNow).ConfigureAwait(false)) {
+				NowFarming = false;
+				GamesToFarm.Clear();
+
+				return;
+			}
+		}
 
 		NowFarming = false;
 

@@ -137,6 +137,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	internal ObservableConcurrentDictionary<uint, ushort> FarmingCardDropRate { get; private init; } = new();
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	internal ConcurrentHashSet<uint> MatchActivelyBlacklistAppIDs { get; private init; } = [];
 
 	[JsonInclude]
@@ -204,6 +209,7 @@ public sealed class BotDatabase : GenericDatabase {
 	private BotDatabase() {
 		ExtraStorePackages.OnModified += OnObjectModified;
 		FarmingBlacklistAppIDs.OnModified += OnObjectModified;
+		FarmingCardDropRate.OnModified += OnObjectModified;
 		FarmingPriorityQueueAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyIgnoredAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyPrioritizedAppIDs.OnModified += OnObjectModified;
@@ -253,6 +259,9 @@ public sealed class BotDatabase : GenericDatabase {
 	public bool ShouldSerializeFarmingBlacklistAppIDs() => FarmingBlacklistAppIDs.Count > 0;
 
 	[UsedImplicitly]
+	public bool ShouldSerializeFarmingCardDropRate() => !FarmingCardDropRate.IsEmpty;
+
+	[UsedImplicitly]
 	public bool ShouldSerializeFarmingPriorityQueueAppIDs() => FarmingPriorityQueueAppIDs.Count > 0;
 
 	[UsedImplicitly]
@@ -287,6 +296,7 @@ public sealed class BotDatabase : GenericDatabase {
 			// Events we registered
 			ExtraStorePackages.OnModified -= OnObjectModified;
 			FarmingBlacklistAppIDs.OnModified -= OnObjectModified;
+			FarmingCardDropRate.OnModified -= OnObjectModified;
 			FarmingPriorityQueueAppIDs.OnModified -= OnObjectModified;
 			FarmingRiskyIgnoredAppIDs.OnModified -= OnObjectModified;
 			FarmingRiskyPrioritizedAppIDs.OnModified -= OnObjectModified;
