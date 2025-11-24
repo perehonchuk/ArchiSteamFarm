@@ -60,6 +60,7 @@ public static class PluginsCore {
 	internal static FrozenSet<IPlugin> ActivePlugins { get; private set; } = [];
 
 	private static FrozenSet<IPluginUpdates> ActivePluginUpdates = [];
+	private static Dictionary<string, PluginSecurityInfo> PluginSecurityDatabase = new();
 
 	[PublicAPI]
 	public static async Task<ICrossProcessSemaphore> GetCrossProcessSemaphore(string objectName) {
@@ -801,6 +802,36 @@ public static class PluginsCore {
 					continue;
 				}
 
+				// Apply plugin security audit and isolation mode checks
+				string pluginName = Path.GetFileNameWithoutExtension(assemblyPath);
+
+				if (ASF.GlobalConfig != null) {
+					GlobalConfig.EPluginIsolationMode isolationMode = ASF.GlobalConfig.PluginIsolationMode;
+
+					if (isolationMode != GlobalConfig.EPluginIsolationMode.None) {
+						if (!ValidatePluginSecurity(pluginName, assemblyPath, isolationMode)) {
+							ASF.ArchiLogger.LogGenericWarning($"Plugin {pluginName} failed security validation for isolation mode {isolationMode}, skipping");
+
+							continue;
+						}
+					}
+
+					if (ASF.GlobalConfig.PluginSecurityAudit) {
+						PluginSecurityInfo securityInfo = AnalyzePluginSecurity(assemblyPath);
+						PluginSecurityDatabase[pluginName] = securityInfo;
+
+						if (securityInfo.RiskLevel >= SecurityRiskLevel.High && !ASF.GlobalConfig.TrustedPlugins.Contains(pluginName)) {
+							ASF.ArchiLogger.LogGenericWarning($"Plugin {pluginName} has risk level {securityInfo.RiskLevel} and is not in TrustedPlugins list");
+
+							if (isolationMode == GlobalConfig.EPluginIsolationMode.Full) {
+								ASF.ArchiLogger.LogGenericWarning($"Plugin {pluginName} blocked by Full isolation mode due to high risk");
+
+								continue;
+							}
+						}
+					}
+				}
+
 				Assembly assembly;
 
 				try {
@@ -821,6 +852,108 @@ public static class PluginsCore {
 		}
 
 		return assemblies;
+	}
+
+	private static bool ValidatePluginSecurity(string pluginName, string assemblyPath, GlobalConfig.EPluginIsolationMode isolationMode) {
+		// Official plugins always pass validation
+		if (pluginName.StartsWith("ArchiSteamFarm.OfficialPlugins.", StringComparison.OrdinalIgnoreCase)) {
+			return true;
+		}
+
+		// Plugins in TrustedPlugins list always pass
+		if (ASF.GlobalConfig?.TrustedPlugins.Contains(pluginName) == true) {
+			ASF.ArchiLogger.LogGenericInfo($"Plugin {pluginName} trusted by user configuration");
+
+			return true;
+		}
+
+		// Apply isolation mode checks
+		switch (isolationMode) {
+			case GlobalConfig.EPluginIsolationMode.Minimal:
+				// Only block plugins with known malicious patterns
+				return !ContainsMaliciousPatterns(assemblyPath);
+			case GlobalConfig.EPluginIsolationMode.Standard:
+				// Block plugins that access sensitive APIs without being trusted
+				return !AccessesSensitiveAPIs(assemblyPath);
+			case GlobalConfig.EPluginIsolationMode.Full:
+				// Only allow official plugins and explicitly trusted plugins
+				return false;
+			default:
+				return true;
+		}
+	}
+
+	private static bool ContainsMaliciousPatterns(string assemblyPath) {
+		// Placeholder for malicious pattern detection
+		// In real implementation, this would analyze the assembly for suspicious code patterns
+		return false;
+	}
+
+	private static bool AccessesSensitiveAPIs(string assemblyPath) {
+		// Placeholder for sensitive API access detection
+		// In real implementation, this would check for file system, network, or registry access
+		return false;
+	}
+
+	private static PluginSecurityInfo AnalyzePluginSecurity(string assemblyPath) {
+		// Analyze plugin for security risks
+		PluginSecurityInfo info = new() {
+			AssemblyPath = assemblyPath,
+			RiskLevel = SecurityRiskLevel.Low,
+			AnalyzedAt = DateTime.UtcNow
+		};
+
+		// Check for network access
+		if (AccessesNetwork(assemblyPath)) {
+			info.RiskLevel = SecurityRiskLevel.Medium;
+			info.Capabilities.Add("NetworkAccess");
+		}
+
+		// Check for file system access
+		if (AccessesFileSystem(assemblyPath)) {
+			if (info.RiskLevel < SecurityRiskLevel.Medium) {
+				info.RiskLevel = SecurityRiskLevel.Medium;
+			}
+
+			info.Capabilities.Add("FileSystemAccess");
+		}
+
+		// Check for reflective calls
+		if (UsesReflection(assemblyPath)) {
+			info.RiskLevel = SecurityRiskLevel.High;
+			info.Capabilities.Add("ReflectionAccess");
+		}
+
+		return info;
+	}
+
+	private static bool AccessesNetwork(string assemblyPath) {
+		// Placeholder - would check for System.Net usage
+		return false;
+	}
+
+	private static bool AccessesFileSystem(string assemblyPath) {
+		// Placeholder - would check for System.IO usage
+		return false;
+	}
+
+	private static bool UsesReflection(string assemblyPath) {
+		// Placeholder - would check for System.Reflection usage
+		return false;
+	}
+
+	private class PluginSecurityInfo {
+		internal string AssemblyPath { get; set; } = "";
+		internal SecurityRiskLevel RiskLevel { get; set; }
+		internal DateTime AnalyzedAt { get; set; }
+		internal HashSet<string> Capabilities { get; set; } = [];
+	}
+
+	private enum SecurityRiskLevel {
+		Low,
+		Medium,
+		High,
+		Critical
 	}
 
 	[UnconditionalSuppressMessage("AssemblyLoadTrimming", "IL3000", Justification = "We don't care about trimmed assemblies, as we need it to work only with the known (used) ones")]

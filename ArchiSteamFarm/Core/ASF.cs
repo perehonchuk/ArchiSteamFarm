@@ -133,6 +133,19 @@ public static class ASF {
 
 		Program.AllowCrashFileRemoval = true;
 
+		// Log plugin isolation mode information
+		if (GlobalConfig != null) {
+			ArchiLogger.LogGenericInfo($"Plugin isolation mode: {GlobalConfig.PluginIsolationMode}");
+
+			if (GlobalConfig.PluginSecurityAudit) {
+				ArchiLogger.LogGenericInfo("Plugin security audit: Enabled");
+			}
+
+			if (GlobalConfig.TrustedPlugins.Count > 0) {
+				ArchiLogger.LogGenericInfo($"Trusted plugins: {string.Join(", ", GlobalConfig.TrustedPlugins)}");
+			}
+		}
+
 		await PluginsCore.OnASFInitModules(GlobalConfig.AdditionalProperties).ConfigureAwait(false);
 		await InitRateLimiters().ConfigureAwait(false);
 

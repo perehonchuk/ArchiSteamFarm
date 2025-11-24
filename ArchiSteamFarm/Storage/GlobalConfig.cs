@@ -112,6 +112,12 @@ public sealed class GlobalConfig {
 	public const EPluginsUpdateMode DefaultPluginsUpdateMode = EPluginsUpdateMode.Whitelist;
 
 	[PublicAPI]
+	public const EPluginIsolationMode DefaultPluginIsolationMode = EPluginIsolationMode.Full;
+
+	[PublicAPI]
+	public const bool DefaultPluginSecurityAudit = true;
+
+	[PublicAPI]
 	public const bool DefaultShutdownIfPossible = false;
 
 	[PublicAPI]
@@ -143,6 +149,9 @@ public sealed class GlobalConfig {
 
 	[PublicAPI]
 	public static readonly ImmutableHashSet<uint> DefaultBlacklist = [];
+
+	[PublicAPI]
+	public static readonly ImmutableHashSet<string> DefaultTrustedPlugins = [];
 
 	[PublicAPI]
 	public static readonly Guid? DefaultLicenseID;
@@ -296,6 +305,16 @@ public sealed class GlobalConfig {
 
 	[JsonInclude]
 	public EPluginsUpdateMode PluginsUpdateMode { get; init; } = DefaultPluginsUpdateMode;
+
+	[JsonInclude]
+	public EPluginIsolationMode PluginIsolationMode { get; init; } = DefaultPluginIsolationMode;
+
+	[JsonInclude]
+	public bool PluginSecurityAudit { get; init; } = DefaultPluginSecurityAudit;
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	public ImmutableHashSet<string> TrustedPlugins { get; init; } = DefaultTrustedPlugins;
 
 	[JsonInclude]
 	public bool ShutdownIfPossible { get; init; } = DefaultShutdownIfPossible;
@@ -618,6 +637,14 @@ public sealed class GlobalConfig {
 	public enum EPluginsUpdateMode : byte {
 		Whitelist,
 		Blacklist
+	}
+
+	[PublicAPI]
+	public enum EPluginIsolationMode : byte {
+		None,
+		Minimal,
+		Standard,
+		Full
 	}
 
 	[PublicAPI]
