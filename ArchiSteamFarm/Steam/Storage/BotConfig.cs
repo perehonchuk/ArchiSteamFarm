@@ -73,6 +73,15 @@ public sealed class BotConfig {
 	public const byte DefaultHoursUntilCardDrops = 3;
 
 	[PublicAPI]
+	public const bool DefaultIntelligentPauseEnabled = false;
+
+	[PublicAPI]
+	public const ushort DefaultIntelligentPauseCooldownMinutes = 30;
+
+	[PublicAPI]
+	public const byte DefaultIntelligentPauseThreshold = 5;
+
+	[PublicAPI]
 	public const string? DefaultMachineName = null;
 
 	[PublicAPI]
@@ -235,6 +244,17 @@ public sealed class BotConfig {
 	[JsonInclude]
 	[Range(byte.MinValue, byte.MaxValue)]
 	public byte HoursUntilCardDrops { get; init; } = DefaultHoursUntilCardDrops;
+
+	[JsonInclude]
+	public bool IntelligentPauseEnabled { get; init; } = DefaultIntelligentPauseEnabled;
+
+	[JsonInclude]
+	[Range(1, ushort.MaxValue)]
+	public ushort IntelligentPauseCooldownMinutes { get; init; } = DefaultIntelligentPauseCooldownMinutes;
+
+	[JsonInclude]
+	[Range(1, byte.MaxValue)]
+	public byte IntelligentPauseThreshold { get; init; } = DefaultIntelligentPauseThreshold;
 
 	[JsonDisallowNull]
 	[JsonInclude]
@@ -411,6 +431,15 @@ public sealed class BotConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeHoursUntilCardDrops() => !Saving || (HoursUntilCardDrops != DefaultHoursUntilCardDrops);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeIntelligentPauseEnabled() => !Saving || (IntelligentPauseEnabled != DefaultIntelligentPauseEnabled);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeIntelligentPauseCooldownMinutes() => !Saving || (IntelligentPauseCooldownMinutes != DefaultIntelligentPauseCooldownMinutes);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeIntelligentPauseThreshold() => !Saving || (IntelligentPauseThreshold != DefaultIntelligentPauseThreshold);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeLootableTypes() => !Saving || ((LootableTypes != DefaultLootableTypes) && !LootableTypes.SetEquals(DefaultLootableTypes));

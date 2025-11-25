@@ -317,8 +317,18 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			return;
 		}
 
+		// Check if intelligent pause should trigger a cooldown period
+		if (Bot.BotConfig.IntelligentPauseEnabled && ShouldEnterIntelligentPauseCooldown()) {
+			Bot.ArchiLogger.LogGenericInfo($"Intelligent pause activated: entering cooldown for {Bot.BotConfig.IntelligentPauseCooldownMinutes} minutes due to {Bot.BotDatabase.IntelligentPauseConsecutiveFailures} consecutive failures");
+			Bot.BotDatabase.IntelligentPauseLastCooldownTime = DateTime.UtcNow;
+			await Pause(false).ConfigureAwait(false);
+
+			return;
+		}
+
 		if (!Bot.CanReceiveSteamCards || (Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmPriorityQueueOnly) && (Bot.BotDatabase.FarmingPriorityQueueAppIDs.Count == 0))) {
 			Bot.ArchiLogger.LogGenericInfo(Strings.NothingToIdle);
+			TrackFarmingResult(false);
 			await Bot.OnFarmingFinished(false).ConfigureAwait(false);
 
 			return;
@@ -877,6 +887,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		NowFarming = false;
 
 		Bot.ArchiLogger.LogGenericInfo(Strings.IdlingFinished);
+		TrackFarmingResult(true);
 		await Bot.OnFarmingFinished(true).ConfigureAwait(false);
 	}
 
@@ -923,6 +934,11 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Bot.ArchiLogger.LogGenericInfo(Strings.FormatStoppedIdling(game.AppID, game.GameName));
+
+		// Track result: failure if we stopped farming without completing
+		if (!keepFarming) {
+			TrackFarmingResult(false);
+		}
 
 		return keepFarming;
 	}
@@ -1548,5 +1564,38 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// We must call ToList() here as we can't do in-place replace
 		List<Game> gamesToFarm = orderedGamesToFarm.ToList();
 		GamesToFarm.ReplaceWith(gamesToFarm);
+	}
+
+	private bool ShouldEnterIntelligentPauseCooldown() {
+		// Check if we've reached the failure threshold
+		if (Bot.BotDatabase.IntelligentPauseConsecutiveFailures < Bot.BotConfig.IntelligentPauseThreshold) {
+			return false;
+		}
+
+		// Check if we're still in cooldown period
+		if (Bot.BotDatabase.IntelligentPauseLastCooldownTime.HasValue) {
+			TimeSpan timeSinceCooldown = DateTime.UtcNow - Bot.BotDatabase.IntelligentPauseLastCooldownTime.Value;
+
+			if (timeSinceCooldown.TotalMinutes < Bot.BotConfig.IntelligentPauseCooldownMinutes) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private void TrackFarmingResult(bool success) {
+		if (!Bot.BotConfig.IntelligentPauseEnabled) {
+			return;
+		}
+
+		if (success) {
+			// Reset failure counter on successful farming
+			Bot.BotDatabase.IntelligentPauseConsecutiveFailures = 0;
+		} else {
+			// Increment failure counter
+			Bot.BotDatabase.IntelligentPauseConsecutiveFailures++;
+			Bot.ArchiLogger.LogGenericWarning($"Intelligent pause: tracking failure #{Bot.BotDatabase.IntelligentPauseConsecutiveFailures} (threshold: {Bot.BotConfig.IntelligentPauseThreshold})");
+		}
 	}
 }
