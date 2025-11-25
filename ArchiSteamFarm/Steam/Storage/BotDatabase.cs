@@ -192,6 +192,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	internal ObservableConcurrentDictionary<ulong, TradePartnerReputation> TradingPartnerReputation { get; private init; } = new();
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
 	private BotDatabase(string filePath) : this() {
@@ -209,6 +214,7 @@ public sealed class BotDatabase : GenericDatabase {
 		FarmingRiskyPrioritizedAppIDs.OnModified += OnObjectModified;
 		MatchActivelyBlacklistAppIDs.OnModified += OnObjectModified;
 		TradingBlacklistSteamIDs.OnModified += OnObjectModified;
+		TradingPartnerReputation.OnModified += OnObjectModified;
 	}
 
 	[PublicAPI]
@@ -419,5 +425,52 @@ public sealed class BotDatabase : GenericDatabase {
 		}
 
 		await Save().ConfigureAwait(false);
+	}
+
+	[PublicAPI]
+	public sealed class TradePartnerReputation {
+		[JsonInclude]
+		public uint SuccessfulTrades { get; set; }
+
+		[JsonInclude]
+		public uint RejectedTrades { get; set; }
+
+		[JsonInclude]
+		public DateTime FirstTradeAttempt { get; set; } = DateTime.UtcNow;
+
+		[JsonInclude]
+		public DateTime LastSuccessfulTrade { get; set; }
+
+		[JsonInclude]
+		public uint TotalItemsReceived { get; set; }
+
+		[JsonInclude]
+		public uint TotalItemsGiven { get; set; }
+
+		[JsonIgnore]
+		public double ReputationScore => CalculateReputationScore();
+
+		private double CalculateReputationScore() {
+			if (SuccessfulTrades == 0) {
+				return 0;
+			}
+
+			uint totalTrades = SuccessfulTrades + RejectedTrades;
+			double successRate = (double) SuccessfulTrades / totalTrades;
+
+			// Base score on success rate (0-100)
+			double score = successRate * 100;
+
+			// Bonus for trade volume (up to +20)
+			double volumeBonus = Math.Min(20, SuccessfulTrades * 0.5);
+			score += volumeBonus;
+
+			// Bonus for long-term relationship (up to +10)
+			TimeSpan tradingRelationship = DateTime.UtcNow - FirstTradeAttempt;
+			double relationshipBonus = Math.Min(10, tradingRelationship.TotalDays / 30);
+			score += relationshipBonus;
+
+			return Math.Min(score, 130); // Cap at 130
+		}
 	}
 }

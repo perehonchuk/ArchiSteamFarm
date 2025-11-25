@@ -488,6 +488,43 @@ public sealed class Trading : IDisposable {
 				return result;
 		}
 
+		// Check reputation system before other trade logic
+		if (Bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.UseReputationSystem) && (tradeOffer.OtherSteamID64 != 0)) {
+			BotDatabase.TradePartnerReputation? reputation = Bot.BotDatabase.TradingPartnerReputation.GetValueOrDefault(tradeOffer.OtherSteamID64);
+
+			if (reputation != null) {
+				// Calculate minimum reputation score required (default 50)
+				const double minimumReputationScore = 50;
+
+				if (reputation.ReputationScore < minimumReputationScore) {
+					Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Rejected, $"{nameof(BotConfig.ETradingPreferences.UseReputationSystem)}: ReputationScore {reputation.ReputationScore:F2} < {minimumReputationScore}"));
+
+					// Record rejected trade attempt
+					reputation.RejectedTrades++;
+
+					return ParseTradeResult.EResult.Rejected;
+				}
+
+				// High reputation partners get preferential treatment for borderline trades
+				if (reputation.ReputationScore >= 100) {
+					Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Accepted, $"{nameof(BotConfig.ETradingPreferences.UseReputationSystem)}: HighReputation {reputation.ReputationScore:F2}"));
+
+					// Track this as a successful trade even before confirmation
+					reputation.SuccessfulTrades++;
+					reputation.LastSuccessfulTrade = DateTime.UtcNow;
+					reputation.TotalItemsReceived += (uint) tradeOffer.ItemsToReceive.Sum(static item => item.Amount);
+					reputation.TotalItemsGiven += (uint) tradeOffer.ItemsToGive.Sum(static item => item.Amount);
+
+					return ParseTradeResult.EResult.Accepted;
+				}
+			} else {
+				// First-time trader, create reputation entry
+				Bot.BotDatabase.TradingPartnerReputation[tradeOffer.OtherSteamID64] = new BotDatabase.TradePartnerReputation {
+					FirstTradeAttempt = DateTime.UtcNow
+				};
+			}
+		}
+
 		// If we don't have SteamTradeMatcher enabled, this is the end for us
 		if (!Bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.SteamTradeMatcher)) {
 			Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Rejected, $"{nameof(BotConfig.ETradingPreferences.SteamTradeMatcher)} = {false}"));
@@ -584,8 +621,25 @@ public sealed class Trading : IDisposable {
 			}
 
 			acceptResult = ParseTradeResult.EResult.Accepted;
+
+			// Update reputation for accepted trades
+			if (Bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.UseReputationSystem) && (tradeOffer.OtherSteamID64 != 0)) {
+				BotDatabase.TradePartnerReputation reputation = Bot.BotDatabase.TradingPartnerReputation.GetOrAdd(tradeOffer.OtherSteamID64, static _ => new BotDatabase.TradePartnerReputation { FirstTradeAttempt = DateTime.UtcNow });
+
+				reputation.SuccessfulTrades++;
+				reputation.LastSuccessfulTrade = DateTime.UtcNow;
+				reputation.TotalItemsReceived += (uint) tradeOffer.ItemsToReceive.Sum(static item => item.Amount);
+				reputation.TotalItemsGiven += (uint) tradeOffer.ItemsToGive.Sum(static item => item.Amount);
+			}
 		} else {
 			acceptResult = ParseTradeResult.EResult.Rejected;
+
+			// Update reputation for rejected trades
+			if (Bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.UseReputationSystem) && (tradeOffer.OtherSteamID64 != 0)) {
+				BotDatabase.TradePartnerReputation reputation = Bot.BotDatabase.TradingPartnerReputation.GetOrAdd(tradeOffer.OtherSteamID64, static _ => new BotDatabase.TradePartnerReputation { FirstTradeAttempt = DateTime.UtcNow });
+
+				reputation.RejectedTrades++;
+			}
 		}
 
 		Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, acceptResult, nameof(IsTradeNeutralOrBetter)));
