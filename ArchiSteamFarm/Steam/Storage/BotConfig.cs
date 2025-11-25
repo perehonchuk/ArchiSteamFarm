@@ -73,6 +73,9 @@ public sealed class BotConfig {
 	public const byte DefaultHoursUntilCardDrops = 3;
 
 	[PublicAPI]
+	public const bool DefaultEnablePriorityFarming = false;
+
+	[PublicAPI]
 	public const string? DefaultMachineName = null;
 
 	[PublicAPI]
@@ -235,6 +238,9 @@ public sealed class BotConfig {
 	[JsonInclude]
 	[Range(byte.MinValue, byte.MaxValue)]
 	public byte HoursUntilCardDrops { get; init; } = DefaultHoursUntilCardDrops;
+
+	[JsonInclude]
+	public bool EnablePriorityFarming { get; init; } = DefaultEnablePriorityFarming;
 
 	[JsonDisallowNull]
 	[JsonInclude]
@@ -411,6 +417,9 @@ public sealed class BotConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeHoursUntilCardDrops() => !Saving || (HoursUntilCardDrops != DefaultHoursUntilCardDrops);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeEnablePriorityFarming() => !Saving || (EnablePriorityFarming != DefaultEnablePriorityFarming);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeLootableTypes() => !Saving || ((LootableTypes != DefaultLootableTypes) && !LootableTypes.SetEquals(DefaultLootableTypes));

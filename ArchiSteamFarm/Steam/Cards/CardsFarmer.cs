@@ -236,7 +236,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			// We should restart the farming if the order or efficiency of the farming could be affected by the newly-activated product
 			// The order is affected when user uses farming order that isn't independent of the game data (it could alter the order in deterministic way if the game was considered in current queue)
 			// The efficiency is affected only in complex algorithm (entirely), as it depends on hours order that is not independent (as specified above)
-			if (!ShouldSkipNewGamesIfPossible && ((Bot.BotConfig.HoursUntilCardDrops > 0) || ((Bot.BotConfig.FarmingOrders.Count > 0) && Bot.BotConfig.FarmingOrders.Any(static farmingOrder => farmingOrder is not BotConfig.EFarmingOrder.Unordered and not BotConfig.EFarmingOrder.Random)))) {
+			if (!ShouldSkipNewGamesIfPossible && ((Bot.BotConfig.HoursUntilCardDrops > 0) || Bot.BotConfig.EnablePriorityFarming || ((Bot.BotConfig.FarmingOrders.Count > 0) && Bot.BotConfig.FarmingOrders.Any(static farmingOrder => farmingOrder is not BotConfig.EFarmingOrder.Unordered and not BotConfig.EFarmingOrder.Random)))) {
 				await StopFarming().ConfigureAwait(false);
 				await StartFarming().ConfigureAwait(false);
 			}
@@ -782,7 +782,30 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			Bot.ArchiLogger.LogGenericInfo(Strings.FormatGamesToIdle(GamesToFarm.Count, GamesToFarm.Sum(static game => game.CardsRemaining), TimeRemaining.ToHumanReadable()));
 
 			// Now the algorithm used for farming depends on whether account is restricted or not
-			if (Bot.BotConfig.HoursUntilCardDrops > 0) {
+			// But if EnablePriorityFarming is enabled, we use the Priority algorithm instead
+			if (Bot.BotConfig.EnablePriorityFarming && (Bot.BotConfig.HoursUntilCardDrops == 0)) {
+				// Priority farming: farm games with the most cards remaining first
+				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Priority"));
+
+				while (GamesToFarm.Count > 0) {
+					// Select the game with the most cards remaining
+					Game game = GamesToFarm.OrderByDescending(static g => g.CardsRemaining).First();
+
+					if (!await IsPlayableGame(game).ConfigureAwait(false)) {
+						GamesToFarm.Remove(game);
+
+						continue;
+					}
+
+					if (await FarmSolo(game).ConfigureAwait(false)) {
+						continue;
+					}
+
+					NowFarming = false;
+
+					return;
+				}
+			} else if (Bot.BotConfig.HoursUntilCardDrops > 0) {
 				// If we have restricted card drops, we use complex algorithm
 				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Complex"));
 

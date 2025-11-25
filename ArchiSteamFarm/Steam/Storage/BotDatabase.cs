@@ -137,6 +137,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	internal ObservableConcurrentDictionary<uint, byte> PriorityFarmingHistory { get; private init; } = new();
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	internal ConcurrentHashSet<uint> MatchActivelyBlacklistAppIDs { get; private init; } = [];
 
 	[JsonInclude]
@@ -207,6 +212,7 @@ public sealed class BotDatabase : GenericDatabase {
 		FarmingPriorityQueueAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyIgnoredAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyPrioritizedAppIDs.OnModified += OnObjectModified;
+		PriorityFarmingHistory.OnModified += OnObjectModified;
 		MatchActivelyBlacklistAppIDs.OnModified += OnObjectModified;
 		TradingBlacklistSteamIDs.OnModified += OnObjectModified;
 	}
@@ -290,6 +296,7 @@ public sealed class BotDatabase : GenericDatabase {
 			FarmingPriorityQueueAppIDs.OnModified -= OnObjectModified;
 			FarmingRiskyIgnoredAppIDs.OnModified -= OnObjectModified;
 			FarmingRiskyPrioritizedAppIDs.OnModified -= OnObjectModified;
+			PriorityFarmingHistory.OnModified -= OnObjectModified;
 			MatchActivelyBlacklistAppIDs.OnModified -= OnObjectModified;
 			TradingBlacklistSteamIDs.OnModified -= OnObjectModified;
 
