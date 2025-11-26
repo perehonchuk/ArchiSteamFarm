@@ -274,6 +274,27 @@ public sealed class Trading : IDisposable {
 		return state;
 	}
 
+	private int GetTradePriority(TradeOffer tradeOffer) {
+		ArgumentNullException.ThrowIfNull(tradeOffer);
+
+		// Assign priority based on user's access level
+		// Higher access levels get higher priority for faster trade processing
+		if (tradeOffer.OtherSteamID64 == 0) {
+			// Unknown steam ID, lowest priority
+			return 0;
+		}
+
+		EAccess access = Bot.GetAccess(tradeOffer.OtherSteamID64);
+
+		return access switch {
+			EAccess.Owner => 100,
+			EAccess.Master => 75,
+			EAccess.Operator => 50,
+			EAccess.FamilySharing => 25,
+			_ => 10
+		};
+	}
+
 	private async Task<bool> ParseActiveTrades() {
 		bool lootableTypesReceived = false;
 
@@ -290,7 +311,18 @@ public sealed class Trading : IDisposable {
 
 			HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets = [];
 
-			IEnumerable<Task<ParseTradeResult>> tasks = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID)).Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
+			// Priority-based trade handling: sort trades by user access level to process higher-priority trades first
+			// This ensures trades from Owners and Masters are handled before trades from Operators and other users
+			List<TradeOffer> sortedTradeOffers = tradeOffers
+				.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID))
+				.OrderByDescending(tradeOffer => GetTradePriority(tradeOffer))
+				.ToList();
+
+			if (sortedTradeOffers.Count > 1) {
+				Bot.ArchiLogger.LogGenericTrace($"Processing {sortedTradeOffers.Count} trade offers with priority-based ordering");
+			}
+
+			IEnumerable<Task<ParseTradeResult>> tasks = sortedTradeOffers.Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
 
 			IList<ParseTradeResult> tradeResults = await Utilities.InParallel(tasks).ConfigureAwait(false);
 

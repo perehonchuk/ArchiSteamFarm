@@ -173,6 +173,8 @@ public sealed class Commands {
 						return await ResponseStop(access).ConfigureAwait(false);
 					case "TB":
 						return ResponseTradingBlacklist(access);
+					case "TP":
+						return ResponseTradePriority(access);
 					case "UNPACK":
 						return await ResponseUnpackBoosters(access).ConfigureAwait(false);
 					case "UPDATE":
@@ -324,6 +326,8 @@ public sealed class Commands {
 						return await ResponseStop(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "TB":
 						return await ResponseTradingBlacklist(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "TP":
+						return await ResponseTradePriority(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "TBADD" when args.Length > 2:
 						return await ResponseTradingBlacklistAdd(access, args[1], Utilities.GetArgsAsText(args, 2, ","), steamID).ConfigureAwait(false);
 					case "TBADD":
@@ -3339,6 +3343,46 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseTradingBlacklist(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private string? ResponseTradePriority(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		StringBuilder response = new();
+		response.AppendLine(FormatBotResponse("Trade Priority Levels:"));
+		response.AppendLine(FormatBotResponse($"Owner: 100 (highest priority)"));
+		response.AppendLine(FormatBotResponse($"Master: 75"));
+		response.AppendLine(FormatBotResponse($"Operator: 50"));
+		response.AppendLine(FormatBotResponse($"FamilySharing: 25"));
+		response.AppendLine(FormatBotResponse($"Other: 10 (lowest priority)"));
+
+		return response.ToString().TrimEnd();
+	}
+
+	private static async Task<string?> ResponseTradePriority(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseTradePriority(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
