@@ -426,6 +426,10 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			return (false, Strings.BotNotConnected);
 		}
 
+		if (Bot.CardsFarmer.Paused) {
+			Bot.ArchiLogger.LogGenericWarning(Strings.BotAutomaticIdlingPausedAlready);
+		}
+
 		if (targetSteamID == 0) {
 			targetSteamID = GetFirstSteamMasterID();
 

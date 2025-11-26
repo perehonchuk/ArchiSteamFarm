@@ -220,6 +220,12 @@ public sealed class Trading : IDisposable {
 			return;
 		}
 
+		if (!Bot.KeepRunning) {
+			Bot.ArchiLogger.LogGenericDebug("Skipping trade processing as bot is stopped");
+
+			return;
+		}
+
 		// We aim to have a maximum of 2 tasks, one already working, and one waiting in the queue
 		// This way we can call this function as many times as needed e.g. because of Steam events
 
