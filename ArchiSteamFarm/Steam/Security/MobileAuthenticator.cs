@@ -47,6 +47,9 @@ public sealed class MobileAuthenticator : IDisposable {
 
 	private const byte CodeInterval = 30;
 
+	// Maximum number of individual confirmation retry attempts
+	private const byte MaxIndividualConfirmationRetries = 3;
+
 	// For how many minutes we can assume that SteamTimeDifference is correct
 	private const byte SteamTimeTTL = 15;
 
@@ -284,16 +287,39 @@ public sealed class MobileAuthenticator : IDisposable {
 
 		// Our multi request failed, this is almost always Steam issue that happens randomly
 		// In this case, we'll accept all pending confirmations one-by-one, synchronously (as Steam can't handle them in parallel)
-		// We totally ignore actual result returned by those calls, abort only if request timed out
-		foreach (Confirmation confirmation in confirmations) {
-			bool? confirmationResult = await Bot.ArchiWebHandler.HandleConfirmation(deviceID, confirmationHash, time, confirmation.ID, confirmation.Nonce, accept).ConfigureAwait(false);
+		// We implement retry logic with exponential backoff for individual confirmations
+		HashSet<Confirmation> failedConfirmations = [];
 
-			if (!confirmationResult.HasValue) {
-				return false;
+		foreach (Confirmation confirmation in confirmations) {
+			bool individualSuccess = false;
+
+			for (byte retryAttempt = 0; retryAttempt < MaxIndividualConfirmationRetries; retryAttempt++) {
+				if (retryAttempt > 0) {
+					// Exponential backoff: 500ms, 1000ms, 2000ms
+					await Task.Delay(500 * (1 << retryAttempt)).ConfigureAwait(false);
+				}
+
+				bool? confirmationResult = await Bot.ArchiWebHandler.HandleConfirmation(deviceID, confirmationHash, time, confirmation.ID, confirmation.Nonce, accept).ConfigureAwait(false);
+
+				if (!confirmationResult.HasValue) {
+					// Request timed out, abort all retries
+					return false;
+				}
+
+				if (confirmationResult.Value) {
+					individualSuccess = true;
+
+					break;
+				}
+			}
+
+			if (!individualSuccess) {
+				failedConfirmations.Add(confirmation);
 			}
 		}
 
-		return true;
+		// Return success if at least some confirmations were handled, allowing caller to retry failed ones
+		return failedConfirmations.Count < confirmations.Count;
 	}
 
 	internal void Init(Bot bot) {

@@ -227,10 +227,14 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		}
 
 		Dictionary<ulong, Confirmation>? handledConfirmations = null;
+		HashSet<ulong>? failedConfirmationCreatorIDs = null;
+		byte consecutiveHandleFailures = 0;
 
 		for (byte i = 0; (i == 0) || ((i < WebBrowser.MaxTries) && waitIfNeeded); i++) {
 			if (i > 0) {
-				await Task.Delay(1000).ConfigureAwait(false);
+				// Progressive delay: increase wait time based on consecutive failures
+				int delayMultiplier = Math.Min(consecutiveHandleFailures + 1, 5);
+				await Task.Delay(1000 * delayMultiplier).ConfigureAwait(false);
 			}
 
 			ImmutableHashSet<Confirmation>? confirmations = await Bot.BotDatabase.MobileAuthenticator.GetConfirmations().ConfigureAwait(false);
@@ -257,23 +261,83 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 				}
 			}
 
-			if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(remainingConfirmations, accept).ConfigureAwait(false)) {
-				return (false, handledConfirmations?.Values, Strings.WarningFailed);
+			// Filter out previously failed confirmations on retry attempts to process them separately
+			HashSet<Confirmation>? retryConfirmations = null;
+
+			if ((failedConfirmationCreatorIDs != null) && (failedConfirmationCreatorIDs.Count > 0)) {
+				retryConfirmations = remainingConfirmations.Where(confirmation => failedConfirmationCreatorIDs.Contains(confirmation.CreatorID)).ToHashSet();
+
+				// Process retry confirmations first with individual handling
+				if (retryConfirmations.Count > 0) {
+					remainingConfirmations.ExceptWith(retryConfirmations);
+				}
 			}
 
-			handledConfirmations ??= new Dictionary<ulong, Confirmation>();
+			// Handle normal confirmations in batch
+			if (remainingConfirmations.Count > 0) {
+				if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(remainingConfirmations, accept).ConfigureAwait(false)) {
+					consecutiveHandleFailures++;
 
-			foreach (Confirmation confirmation in remainingConfirmations) {
-				handledConfirmations[confirmation.CreatorID] = confirmation;
+					// Track which confirmations failed for individual retry on next iteration
+					failedConfirmationCreatorIDs ??= [];
+
+					foreach (Confirmation confirmation in remainingConfirmations) {
+						failedConfirmationCreatorIDs.Add(confirmation.CreatorID);
+					}
+
+					// Continue to retry confirmations if they exist
+					if (retryConfirmations?.Count > 0) {
+						remainingConfirmations = retryConfirmations;
+					} else {
+						continue;
+					}
+				} else {
+					consecutiveHandleFailures = 0;
+
+					handledConfirmations ??= new Dictionary<ulong, Confirmation>();
+
+					foreach (Confirmation confirmation in remainingConfirmations) {
+						handledConfirmations[confirmation.CreatorID] = confirmation;
+
+						// Remove from failed list on success
+						failedConfirmationCreatorIDs?.Remove(confirmation.CreatorID);
+					}
+
+					remainingConfirmations = retryConfirmations ?? [];
+				}
+			} else if (retryConfirmations != null) {
+				remainingConfirmations = retryConfirmations;
+			}
+
+			// Handle retry confirmations individually if they exist
+			if (remainingConfirmations.Count > 0) {
+				foreach (Confirmation confirmation in remainingConfirmations) {
+					if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations([confirmation], accept).ConfigureAwait(false)) {
+						consecutiveHandleFailures++;
+						failedConfirmationCreatorIDs ??= [];
+						failedConfirmationCreatorIDs.Add(confirmation.CreatorID);
+
+						continue;
+					}
+
+					consecutiveHandleFailures = 0;
+					handledConfirmations ??= new Dictionary<ulong, Confirmation>();
+					handledConfirmations[confirmation.CreatorID] = confirmation;
+					failedConfirmationCreatorIDs?.Remove(confirmation.CreatorID);
+				}
 			}
 
 			// We've accepted *something*, if caller didn't specify the IDs, that's enough for us
 			if ((acceptedCreatorIDs == null) || (acceptedCreatorIDs.Count == 0)) {
-				return (true, handledConfirmations.Values, Strings.FormatBotHandledConfirmations(handledConfirmations.Count));
+				if ((handledConfirmations != null) && (handledConfirmations.Count > 0)) {
+					return (true, handledConfirmations.Values, Strings.FormatBotHandledConfirmations(handledConfirmations.Count));
+				}
+
+				continue;
 			}
 
 			// If they did, check if we've already found everything we were supposed to
-			if ((handledConfirmations.Count >= acceptedCreatorIDs.Count) && acceptedCreatorIDs.All(handledConfirmations.ContainsKey)) {
+			if ((handledConfirmations != null) && (handledConfirmations.Count >= acceptedCreatorIDs.Count) && acceptedCreatorIDs.All(handledConfirmations.ContainsKey)) {
 				return (true, handledConfirmations.Values, Strings.FormatBotHandledConfirmations(handledConfirmations.Count));
 			}
 		}
