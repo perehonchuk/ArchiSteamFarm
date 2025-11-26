@@ -155,6 +155,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private bool PermanentlyPaused;
 	private bool ShouldResumeFarming;
 	private bool ShouldSkipNewGamesIfPossible;
+	private DateTime? CurrentSessionStartTime;
+	private Timer? SessionTimer;
 
 	internal CardsFarmer(Bot bot) {
 		ArgumentNullException.ThrowIfNull(bot);
@@ -180,6 +182,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 		// Those are objects that might be null and the check should be in-place
 		IdleFarmingTimer?.Dispose();
+		SessionTimer?.Dispose();
 	}
 
 	public async ValueTask DisposeAsync() {
@@ -190,6 +193,10 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// Those are objects that might be null and the check should be in-place
 		if (IdleFarmingTimer != null) {
 			await IdleFarmingTimer.DisposeAsync().ConfigureAwait(false);
+		}
+
+		if (SessionTimer != null) {
+			await SessionTimer.DisposeAsync().ConfigureAwait(false);
 		}
 	}
 
@@ -331,6 +338,14 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 				return;
 			}
 
+			// Check if we're in quiet hours
+			if (Bot.BotConfig.EnableSessionBasedFarming && IsInQuietHours()) {
+				Bot.ArchiLogger.LogGenericInfo($"Bot is in quiet hours ({Bot.BotConfig.QuietHoursStart:D2}:00-{Bot.BotConfig.QuietHoursEnd:D2}:00). Farming will resume when quiet hours end.");
+				ScheduleQuietHoursEnd();
+
+				return;
+			}
+
 			bool? isAnythingToFarm = await IsAnythingToFarm().ConfigureAwait(false);
 
 			if (!isAnythingToFarm.HasValue) {
@@ -380,6 +395,10 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			}
 
 			NowFarming = true;
+
+			// Start session-based farming if enabled
+			StartFarmingSession();
+
 			Utilities.InBackground(Farm, true);
 
 			await PluginsCore.OnBotFarmingStarted(Bot).ConfigureAwait(false);
@@ -1548,5 +1567,72 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// We must call ToList() here as we can't do in-place replace
 		List<Game> gamesToFarm = orderedGamesToFarm.ToList();
 		GamesToFarm.ReplaceWith(gamesToFarm);
+	}
+
+	private bool IsInQuietHours() {
+		if (!Bot.BotConfig.EnableSessionBasedFarming) {
+			return false;
+		}
+
+		byte start = Bot.BotConfig.QuietHoursStart;
+		byte end = Bot.BotConfig.QuietHoursEnd;
+
+		if (start == end) {
+			return false; // No quiet hours configured
+		}
+
+		byte currentHour = (byte) DateTime.Now.Hour;
+
+		if (start < end) {
+			// Normal range (e.g., 22:00 to 06:00 next day doesn't cross midnight)
+			return currentHour >= start && currentHour < end;
+		}
+
+		// Range crosses midnight (e.g., 22:00 to 06:00)
+		return currentHour >= start || currentHour < end;
+	}
+
+	private void ScheduleQuietHoursEnd() {
+		SessionTimer?.Dispose();
+
+		byte endHour = Bot.BotConfig.QuietHoursEnd;
+		DateTime now = DateTime.Now;
+		DateTime nextRun = new(now.Year, now.Month, now.Day, endHour, 0, 0);
+
+		if (nextRun <= now) {
+			nextRun = nextRun.AddDays(1);
+		}
+
+		TimeSpan delay = nextRun - now;
+		Bot.ArchiLogger.LogGenericInfo($"Farming will resume at {nextRun:HH:mm} (in {delay.ToHumanReadable()})");
+
+		SessionTimer = new Timer(
+			_ => Utilities.InBackground(() => StartFarming()),
+			null,
+			delay,
+			Timeout.InfiniteTimeSpan
+		);
+	}
+
+	private void StartFarmingSession() {
+		if (!Bot.BotConfig.EnableSessionBasedFarming) {
+			return;
+		}
+
+		CurrentSessionStartTime = DateTime.Now;
+		SessionTimer?.Dispose();
+
+		TimeSpan sessionDuration = TimeSpan.FromMinutes(Bot.BotConfig.FarmingSessionDuration);
+		Bot.ArchiLogger.LogGenericInfo($"Starting farming session for {sessionDuration.ToHumanReadable()}");
+
+		SessionTimer = new Timer(
+			async _ => {
+				Bot.ArchiLogger.LogGenericInfo("Farming session ended. Pausing farming.");
+				await Pause(false).ConfigureAwait(false);
+			},
+			null,
+			sessionDuration,
+			Timeout.InfiniteTimeSpan
+		);
 	}
 }

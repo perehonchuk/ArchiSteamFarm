@@ -73,6 +73,18 @@ public sealed class BotConfig {
 	public const byte DefaultHoursUntilCardDrops = 3;
 
 	[PublicAPI]
+	public const bool DefaultEnableSessionBasedFarming = false;
+
+	[PublicAPI]
+	public const byte DefaultQuietHoursStart = 0;
+
+	[PublicAPI]
+	public const byte DefaultQuietHoursEnd = 0;
+
+	[PublicAPI]
+	public const byte DefaultFarmingSessionDuration = 120;
+
+	[PublicAPI]
 	public const string? DefaultMachineName = null;
 
 	[PublicAPI]
@@ -235,6 +247,21 @@ public sealed class BotConfig {
 	[JsonInclude]
 	[Range(byte.MinValue, byte.MaxValue)]
 	public byte HoursUntilCardDrops { get; init; } = DefaultHoursUntilCardDrops;
+
+	[JsonInclude]
+	public bool EnableSessionBasedFarming { get; init; } = DefaultEnableSessionBasedFarming;
+
+	[JsonInclude]
+	[Range(0, 23)]
+	public byte QuietHoursStart { get; init; } = DefaultQuietHoursStart;
+
+	[JsonInclude]
+	[Range(0, 23)]
+	public byte QuietHoursEnd { get; init; } = DefaultQuietHoursEnd;
+
+	[JsonInclude]
+	[Range(1, 240)]
+	public byte FarmingSessionDuration { get; init; } = DefaultFarmingSessionDuration;
 
 	[JsonDisallowNull]
 	[JsonInclude]
@@ -411,6 +438,18 @@ public sealed class BotConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeHoursUntilCardDrops() => !Saving || (HoursUntilCardDrops != DefaultHoursUntilCardDrops);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeEnableSessionBasedFarming() => !Saving || (EnableSessionBasedFarming != DefaultEnableSessionBasedFarming);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeQuietHoursStart() => !Saving || (QuietHoursStart != DefaultQuietHoursStart);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeQuietHoursEnd() => !Saving || (QuietHoursEnd != DefaultQuietHoursEnd);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeFarmingSessionDuration() => !Saving || (FarmingSessionDuration != DefaultFarmingSessionDuration);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeLootableTypes() => !Saving || ((LootableTypes != DefaultLootableTypes) && !LootableTypes.SetEquals(DefaultLootableTypes));

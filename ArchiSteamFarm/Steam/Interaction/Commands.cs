@@ -161,6 +161,8 @@ public sealed class Commands {
 						return ResponseResume(access);
 					case "RESTART":
 						return ResponseRestart(access);
+					case "SCHEDULE":
+						return ResponseSchedule(access);
 					case "SA":
 						return await ResponseStatus(access, SharedInfo.ASF, steamID).ConfigureAwait(false);
 					case "START":
@@ -316,6 +318,10 @@ public sealed class Commands {
 						return await ResponseReset(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "RESUME":
 						return await ResponseResume(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "SCHEDULE" when args.Length > 2:
+						return await ResponseSchedule(access, args[1], Utilities.GetArgsAsText(args, 2, ","), steamID).ConfigureAwait(false);
+					case "SCHEDULE":
+						return await ResponseSchedule(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "START":
 						return await ResponseStart(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "STATUS":
@@ -3162,6 +3168,57 @@ public sealed class Commands {
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
 		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private string? ResponseSchedule(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.BotConfig.EnableSessionBasedFarming) {
+			return FormatBotResponse("Session-based farming is not enabled. Enable it in bot config to use quiet hours.");
+		}
+
+		string scheduleInfo = $"Session-based farming: Enabled\n" +
+		                     $"Farming session duration: {Bot.BotConfig.FarmingSessionDuration} minutes\n" +
+		                     $"Quiet hours: {Bot.BotConfig.QuietHoursStart:D2}:00 - {Bot.BotConfig.QuietHoursEnd:D2}:00";
+
+		return FormatBotResponse(scheduleInfo);
+	}
+
+	private static async Task<string?> ResponseSchedule(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseSchedule(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private static async Task<string?> ResponseSchedule(EAccess access, string botNames, string quietHours, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(quietHours);
+
+		return FormatStaticResponse("Setting quiet hours via command is not yet implemented. Please configure in bot config file.");
 	}
 
 	private string? ResponseStart(EAccess access) {
