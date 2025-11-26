@@ -538,6 +538,35 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public string GetBotStatusFlags() {
+		List<string> flags = [];
+
+		if (Bot.KeepRunning) {
+			flags.Add("Enabled");
+		} else {
+			flags.Add("Stopped");
+		}
+
+		if (Bot.CardsFarmer.Paused) {
+			flags.Add("Paused");
+		}
+
+		if (Bot.CardsFarmer.NowFarming) {
+			flags.Add("Farming");
+		} else {
+			flags.Add("Idle");
+		}
+
+		if (Bot.IsConnectedAndLoggedOn) {
+			flags.Add("Online");
+		} else {
+			flags.Add("Offline");
+		}
+
+		return string.Join(", ", flags);
+	}
+
+	[PublicAPI]
 	public async Task<(bool Success, string Message)> Stop() {
 		if (!Bot.KeepRunning) {
 			return (false, Strings.BotAlreadyStopped);
