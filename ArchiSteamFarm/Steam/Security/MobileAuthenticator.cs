@@ -50,7 +50,23 @@ public sealed class MobileAuthenticator : IDisposable {
 	// For how many minutes we can assume that SteamTimeDifference is correct
 	private const byte SteamTimeTTL = 15;
 
+	// Batch confirmation processing delay in milliseconds - allows grouping multiple confirmations
+	private const ushort ConfirmationBatchDelayMilliseconds = 2000;
+
 	internal static readonly ImmutableSortedSet<char> CodeCharacters = ['2', '3', '4', '5', '6', '7', '8', '9', 'B', 'C', 'D', 'F', 'G', 'H', 'J', 'K', 'M', 'N', 'P', 'Q', 'R', 'T', 'V', 'W', 'X', 'Y'];
+
+	// Priority mappings for confirmation types (lower values = higher priority)
+	private static readonly Dictionary<Confirmation.EConfirmationType, byte> ConfirmationPriorities = new() {
+		{ Confirmation.EConfirmationType.AccountRecovery, 1 },
+		{ Confirmation.EConfirmationType.AccountSecurity, 1 },
+		{ Confirmation.EConfirmationType.PhoneNumberChange, 2 },
+		{ Confirmation.EConfirmationType.ApiKeyRegistration, 2 },
+		{ Confirmation.EConfirmationType.FamilyJoin, 3 },
+		{ Confirmation.EConfirmationType.Trade, 10 },
+		{ Confirmation.EConfirmationType.Market, 15 },
+		{ Confirmation.EConfirmationType.Generic, 20 },
+		{ Confirmation.EConfirmationType.Unknown, 99 }
+	};
 
 	private static readonly SemaphoreSlim TimeSemaphore = new(1, 1);
 
@@ -58,7 +74,10 @@ public sealed class MobileAuthenticator : IDisposable {
 	private static int? SteamTimeDifference;
 
 	private readonly ArchiCacheable<string> CachedDeviceID;
+	private readonly List<Confirmation> PendingConfirmationBatch = [];
+	private readonly SemaphoreSlim ConfirmationBatchSemaphore = new(1, 1);
 
+	private Timer? ConfirmationBatchTimer;
 	private Bot? Bot;
 
 	[JsonInclude]
@@ -74,7 +93,11 @@ public sealed class MobileAuthenticator : IDisposable {
 	[JsonConstructor]
 	private MobileAuthenticator() => CachedDeviceID = new ArchiCacheable<string>(ResolveDeviceID);
 
-	public void Dispose() => CachedDeviceID.Dispose();
+	public void Dispose() {
+		ConfirmationBatchTimer?.Dispose();
+		ConfirmationBatchSemaphore.Dispose();
+		CachedDeviceID.Dispose();
+	}
 
 	internal async Task<string?> GenerateToken() {
 		if (Bot == null) {
@@ -248,6 +271,29 @@ public sealed class MobileAuthenticator : IDisposable {
 			throw new InvalidOperationException(nameof(Bot));
 		}
 
+		// Sort confirmations by priority before processing
+		List<Confirmation> sortedConfirmations = confirmations
+			.OrderBy(c => ConfirmationPriorities.TryGetValue(c.ConfirmationType, out byte priority) ? priority : (byte) 99)
+			.ThenBy(c => c.ID)
+			.ToList();
+
+		// Check if we should batch these confirmations
+		bool shouldBatch = await ShouldBatchConfirmations(sortedConfirmations).ConfigureAwait(false);
+
+		if (shouldBatch) {
+			// Add to pending batch and wait for batch timer
+			return await AddToPendingBatch(sortedConfirmations, accept).ConfigureAwait(false);
+		}
+
+		// Process immediately for high-priority confirmations
+		return await ProcessConfirmationsBatch(sortedConfirmations, accept).ConfigureAwait(false);
+	}
+
+	private async Task<bool> ProcessConfirmationsBatch(IReadOnlyCollection<Confirmation> confirmations, bool accept) {
+		if (Bot == null) {
+			throw new InvalidOperationException(nameof(Bot));
+		}
+
 		(_, string? deviceID) = await CachedDeviceID.GetValue(ECacheFallback.SuccessPreviously).ConfigureAwait(false);
 
 		if (string.IsNullOrEmpty(deviceID)) {
@@ -324,6 +370,66 @@ public sealed class MobileAuthenticator : IDisposable {
 		} finally {
 			TimeSemaphore.Release();
 		}
+	}
+
+	private async Task<bool> ShouldBatchConfirmations(List<Confirmation> confirmations) {
+		if (confirmations.Count == 0) {
+			return false;
+		}
+
+		// High-priority confirmations (priority <= 3) should be processed immediately
+		byte highestPriority = confirmations
+			.Select(c => ConfirmationPriorities.TryGetValue(c.ConfirmationType, out byte priority) ? priority : (byte) 99)
+			.Min();
+
+		return highestPriority > 3;
+	}
+
+	private async Task<bool> AddToPendingBatch(List<Confirmation> confirmations, bool accept) {
+		await ConfirmationBatchSemaphore.WaitAsync().ConfigureAwait(false);
+
+		try {
+			PendingConfirmationBatch.AddRange(confirmations);
+
+			// Start or reset the batch timer
+			if (ConfirmationBatchTimer == null) {
+				ConfirmationBatchTimer = new Timer(
+					async _ => await ProcessPendingBatchCallback(accept).ConfigureAwait(false),
+					null,
+					ConfirmationBatchDelayMilliseconds,
+					Timeout.Infinite
+				);
+			} else {
+				ConfirmationBatchTimer.Change(ConfirmationBatchDelayMilliseconds, Timeout.Infinite);
+			}
+
+			return true;
+		} finally {
+			ConfirmationBatchSemaphore.Release();
+		}
+	}
+
+	private async Task ProcessPendingBatchCallback(bool accept) {
+		await ConfirmationBatchSemaphore.WaitAsync().ConfigureAwait(false);
+
+		List<Confirmation> batchToProcess;
+
+		try {
+			if (PendingConfirmationBatch.Count == 0) {
+				return;
+			}
+
+			batchToProcess = new List<Confirmation>(PendingConfirmationBatch);
+			PendingConfirmationBatch.Clear();
+
+			ConfirmationBatchTimer?.Dispose();
+			ConfirmationBatchTimer = null;
+		} finally {
+			ConfirmationBatchSemaphore.Release();
+		}
+
+		// Process the batched confirmations
+		await ProcessConfirmationsBatch(batchToProcess, accept).ConfigureAwait(false);
 	}
 
 	private string? GenerateConfirmationHash(ulong time, string? tag = null) {
