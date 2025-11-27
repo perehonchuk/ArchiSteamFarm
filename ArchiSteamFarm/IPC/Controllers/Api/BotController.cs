@@ -91,6 +91,9 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse(results.All(static result => result)));
 	}
 
+	/// <summary>
+	/// Fetches common info related to given bots. The botNames parameter supports special group selectors such as @all, @enabled, @stopped, @paused, @farming, @idle, @online, and @offline.
+	/// </summary>
 	[EndpointSummary("Fetches common info related to given bots")]
 	[HttpGet("{botNames:required}")]
 	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, Bot>>>((int) HttpStatusCode.OK)]

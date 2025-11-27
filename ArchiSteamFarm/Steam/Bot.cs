@@ -523,6 +523,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		return Bots.Values.FirstOrDefault(bot => bot.SteamID == steamID);
 	}
 
+	/// <summary>
+	/// Gets a set of bots based on the provided arguments. Supports bot names, special selectors (@all, @enabled, @stopped, @paused, @farming, @idle, @online, @offline), range syntax (bot1..bot2), and regex patterns (r!pattern).
+	/// </summary>
 	[PublicAPI]
 	public static HashSet<Bot>? GetBots(string args) {
 		ArgumentException.ThrowIfNullOrEmpty(args);
@@ -545,6 +548,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				case SharedInfo.ASF:
 					// We can return the result right away, as all bots have been matched already
 					return Bots.AsLinqThreadSafeEnumerable().OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value).ToHashSet();
+				case "@ENABLED":
+					IEnumerable<Bot> enabledBots = Bots.Where(static bot => bot.Value.KeepRunning).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(enabledBots);
+
+					continue;
 				case "@FARMING":
 					IEnumerable<Bot> farmingBots = Bots.Where(static bot => bot.Value.CardsFarmer.NowFarming).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
 					result.UnionWith(farmingBots);
@@ -563,6 +571,16 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				case "@ONLINE":
 					IEnumerable<Bot> onlineBots = Bots.Where(static bot => bot.Value.IsConnectedAndLoggedOn).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
 					result.UnionWith(onlineBots);
+
+					continue;
+				case "@PAUSED":
+					IEnumerable<Bot> pausedBots = Bots.Where(static bot => bot.Value.CardsFarmer.Paused).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(pausedBots);
+
+					continue;
+				case "@STOPPED":
+					IEnumerable<Bot> stoppedBots = Bots.Where(static bot => !bot.Value.KeepRunning).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(stoppedBots);
 
 					continue;
 			}
