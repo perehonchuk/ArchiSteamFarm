@@ -254,6 +254,62 @@ public sealed class Trading : IDisposable {
 		}
 	}
 
+	private int CalculateTradePriorityScore(TradeOffer tradeOffer) {
+		ArgumentNullException.ThrowIfNull(tradeOffer);
+
+		int priorityScore = 0;
+
+		// Factor 1: Prioritize trades from Master users (highest priority)
+		if (tradeOffer.OtherSteamID64 != 0) {
+			EAccess userAccess = Bot.GetAccess(tradeOffer.OtherSteamID64);
+
+			switch (userAccess) {
+				case EAccess.Owner:
+					priorityScore += 10000;
+					break;
+				case EAccess.Master:
+					priorityScore += 5000;
+					break;
+				case EAccess.Operator:
+					priorityScore += 2000;
+					break;
+				case EAccess.FamilySharing:
+					priorityScore += 1000;
+					break;
+			}
+		}
+
+		// Factor 2: Prioritize donation trades (we receive more than we give)
+		uint itemsToReceiveCount = (uint) tradeOffer.ItemsToReceive.Sum(static item => item.Amount);
+		uint itemsToGiveCount = (uint) tradeOffer.ItemsToGive.Sum(static item => item.Amount);
+
+		if ((itemsToGiveCount == 0) && (itemsToReceiveCount > 0)) {
+			// Pure donation - very high priority
+			priorityScore += 3000;
+		} else if (itemsToReceiveCount > itemsToGiveCount) {
+			// Favorable trade - high priority
+			priorityScore += 1500;
+		} else if (itemsToReceiveCount == itemsToGiveCount) {
+			// Fair trade - medium priority
+			priorityScore += 500;
+		}
+
+		// Factor 3: Prioritize trades with more items (larger trades are more valuable)
+		priorityScore += (int) Math.Min(itemsToReceiveCount + itemsToGiveCount, 100);
+
+		// Factor 4: Deprioritize trades with foil cards (more complex processing)
+		if (tradeOffer.ItemsToGive.Any(static item => item.Type == EAssetType.FoilTradingCard) || tradeOffer.ItemsToReceive.Any(static item => item.Type == EAssetType.FoilTradingCard)) {
+			priorityScore -= 100;
+		}
+
+		// Factor 5: Prioritize bot-to-bot trades
+		if ((tradeOffer.OtherSteamID64 != 0) && (Bot.Bots?.Values.Any(bot => bot.SteamID == tradeOffer.OtherSteamID64) == true)) {
+			priorityScore += 800;
+		}
+
+		return priorityScore;
+	}
+
 	private static Dictionary<(uint RealAppID, EAssetType Type, EAssetRarity Rarity), Dictionary<ulong, uint>> GetInventoryState(IReadOnlyCollection<Asset> inventory) {
 		if ((inventory == null) || (inventory.Count == 0)) {
 			throw new ArgumentNullException(nameof(inventory));
@@ -290,7 +346,13 @@ public sealed class Trading : IDisposable {
 
 			HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets = [];
 
-			IEnumerable<Task<ParseTradeResult>> tasks = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID)).Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
+			// Sort trades by priority score before processing
+			List<TradeOffer> sortedTradeOffers = tradeOffers
+				.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID))
+				.OrderByDescending(tradeOffer => CalculateTradePriorityScore(tradeOffer))
+				.ToList();
+
+			IEnumerable<Task<ParseTradeResult>> tasks = sortedTradeOffers.Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
 
 			IList<ParseTradeResult> tradeResults = await Utilities.InParallel(tasks).ConfigureAwait(false);
 
@@ -340,6 +402,9 @@ public sealed class Trading : IDisposable {
 	private async Task<ParseTradeResult> ParseTrade(TradeOffer tradeOffer, ISet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets) {
 		ArgumentNullException.ThrowIfNull(tradeOffer);
 		ArgumentNullException.ThrowIfNull(handledSets);
+
+		int priorityScore = CalculateTradePriorityScore(tradeOffer);
+		Bot.ArchiLogger.LogGenericTrace($"Processing trade offer {tradeOffer.TradeOfferID} with priority score {priorityScore}");
 
 		ParseTradeResult.EResult result = await ShouldAcceptTrade(tradeOffer, handledSets).ConfigureAwait(false);
 		bool tradeRequiresMobileConfirmation = false;
@@ -408,10 +473,10 @@ public sealed class Trading : IDisposable {
 			default:
 				Bot.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(result), result));
 
-				return new ParseTradeResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Ignored, false, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive);
+				return new ParseTradeResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Ignored, false, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive, priorityScore);
 		}
 
-		return new ParseTradeResult(tradeOffer.TradeOfferID, result, tradeRequiresMobileConfirmation, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive);
+		return new ParseTradeResult(tradeOffer.TradeOfferID, result, tradeRequiresMobileConfirmation, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive, priorityScore);
 	}
 
 	private async Task<ParseTradeResult.EResult> ShouldAcceptTrade(TradeOffer tradeOffer, ISet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets) {

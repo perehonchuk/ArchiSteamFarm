@@ -45,7 +45,10 @@ public sealed class ParseTradeResult {
 	[PublicAPI]
 	public bool Confirmed { get; internal set; }
 
-	internal ParseTradeResult(ulong tradeOfferID, EResult result, bool requiresMobileConfirmation, IReadOnlyCollection<Asset>? itemsToGive = null, IReadOnlyCollection<Asset>? itemsToReceive = null) {
+	[PublicAPI]
+	public int PriorityScore { get; internal set; }
+
+	internal ParseTradeResult(ulong tradeOfferID, EResult result, bool requiresMobileConfirmation, IReadOnlyCollection<Asset>? itemsToGive = null, IReadOnlyCollection<Asset>? itemsToReceive = null, int priorityScore = 0) {
 		ArgumentOutOfRangeException.ThrowIfZero(tradeOfferID);
 
 		if ((result == EResult.Unknown) || !Enum.IsDefined(result)) {
@@ -57,6 +60,7 @@ public sealed class ParseTradeResult {
 		Confirmed = !requiresMobileConfirmation;
 		ItemsToGive = itemsToGive;
 		ItemsToReceive = itemsToReceive;
+		PriorityScore = priorityScore;
 	}
 
 	public enum EResult : byte {
