@@ -3222,37 +3222,66 @@ public sealed class Commands {
 			return (null, Bot);
 		}
 
-		if (!Bot.IsConnectedAndLoggedOn) {
-			return (FormatBotResponse(Bot.KeepRunning ? Strings.BotStatusConnecting : Strings.BotStatusNotRunning), Bot);
+		// Build bot state tags to show which groups this bot belongs to
+		List<string> stateTags = [];
+
+		if (Bot.BotConfig.Enabled) {
+			stateTags.Add("enabled");
 		}
 
-		if (Bot.PlayingBlocked) {
-			return (FormatBotResponse(Strings.BotStatusPlayingNotAvailable), Bot);
+		if (!Bot.KeepRunning) {
+			stateTags.Add("stopped");
 		}
 
 		if (Bot.CardsFarmer.Paused) {
-			return (FormatBotResponse(Strings.BotStatusPaused), Bot);
+			stateTags.Add("paused");
+		}
+
+		if (Bot.IsConnectedAndLoggedOn) {
+			stateTags.Add("online");
+		} else {
+			stateTags.Add("offline");
+		}
+
+		if (Bot.CardsFarmer.NowFarming) {
+			stateTags.Add("farming");
+		} else {
+			stateTags.Add("idle");
+		}
+
+		string stateInfo = stateTags.Count > 0 ? $" [{string.Join(", ", stateTags)}]" : "";
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return (FormatBotResponse((Bot.KeepRunning ? Strings.BotStatusConnecting : Strings.BotStatusNotRunning) + stateInfo), Bot);
+		}
+
+		if (Bot.PlayingBlocked) {
+			return (FormatBotResponse(Strings.BotStatusPlayingNotAvailable + stateInfo), Bot);
+		}
+
+		if (Bot.CardsFarmer.Paused) {
+			return (FormatBotResponse(Strings.BotStatusPaused + stateInfo), Bot);
 		}
 
 		if (Bot.IsAccountLimited) {
-			return (FormatBotResponse(Strings.BotStatusLimited), Bot);
+			return (FormatBotResponse(Strings.BotStatusLimited + stateInfo), Bot);
 		}
 
 		if (Bot.IsAccountLocked) {
-			return (FormatBotResponse(Strings.BotStatusLocked), Bot);
+			return (FormatBotResponse(Strings.BotStatusLocked + stateInfo), Bot);
 		}
 
 		if (!Bot.CardsFarmer.NowFarming || (Bot.CardsFarmer.CurrentGamesFarmingReadOnly.Count == 0)) {
-			return (FormatBotResponse(Strings.BotStatusNotIdling), Bot);
+			return (FormatBotResponse(Strings.BotStatusNotIdling + stateInfo), Bot);
 		}
 
 		if (Bot.CardsFarmer.CurrentGamesFarmingReadOnly.Count > 1) {
-			return (FormatBotResponse(Strings.FormatBotStatusIdlingList(string.Join(", ", Bot.CardsFarmer.CurrentGamesFarmingReadOnly.Select(static game => $"{game.AppID} ({game.GameName})")), Bot.CardsFarmer.GamesToFarmReadOnly.Count, Bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining), Bot.CardsFarmer.TimeRemaining.ToHumanReadable())), Bot);
+			return (FormatBotResponse(Strings.FormatBotStatusIdlingList(string.Join(", ", Bot.CardsFarmer.CurrentGamesFarmingReadOnly.Select(static game => $"{game.AppID} ({game.GameName})")), Bot.CardsFarmer.GamesToFarmReadOnly.Count, Bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining), Bot.CardsFarmer.TimeRemaining.ToHumanReadable()) + stateInfo), Bot);
 		}
 
 		Game soloGame = Bot.CardsFarmer.CurrentGamesFarmingReadOnly.First();
 
-		return (FormatBotResponse(Strings.FormatBotStatusIdling(soloGame.AppID, soloGame.GameName, soloGame.CardsRemaining, Bot.CardsFarmer.GamesToFarmReadOnly.Count, Bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining), Bot.CardsFarmer.TimeRemaining.ToHumanReadable())), Bot);
+		return (FormatBotResponse(Strings.FormatBotStatusIdling(soloGame.AppID, soloGame.GameName, soloGame.CardsRemaining, Bot.CardsFarmer.GamesToFarmReadOnly.Count, Bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining), Bot.CardsFarmer.TimeRemaining.ToHumanReadable()) + stateInfo), Bot);
 	}
 
 	private static async Task<string?> ResponseStatus(EAccess access, string botNames, ulong steamID = 0) {
