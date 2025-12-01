@@ -54,6 +54,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
+	private const byte SmartResumeQueueThreshold = 10; // Auto-resume farming when queue reaches this size (only for temporary pauses)
 
 	[PublicAPI]
 	public static readonly FrozenSet<uint> SalesBlacklist = [267420, 303700, 335590, 368020, 425280, 480730, 566020, 639900, 762800, 876740, 991980, 1195670, 1343890, 1465680, 1658760, 1797760, 2021850, 2243720, 2459330, 2640280, 2861690, 2861720, 3558920];
@@ -438,6 +439,18 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			Bot.BotDatabase.FarmingRiskyPrioritizedAppIDs.Add(appID);
 
 			GamesToFarm.Add(new Game(appID, name, hours, game.CardsRemaining, badgeLevel));
+
+			// Check if smart resume should be triggered
+			CheckSmartResumeCondition();
+		}
+	}
+
+	private void CheckSmartResumeCondition() {
+		// Smart resume: automatically resume farming if temporarily paused and queue is significant
+		if (Paused && !PermanentlyPaused && (GamesToFarm.Count >= SmartResumeQueueThreshold)) {
+			Bot.ArchiLogger.LogGenericInfo($"Smart resume triggered: {GamesToFarm.Count} games in queue (threshold: {SmartResumeQueueThreshold})");
+
+			Utilities.InBackground(() => Resume(false));
 		}
 	}
 
@@ -738,6 +751,9 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 				Bot.BotDatabase.FarmingRiskyPrioritizedAppIDs.Add(appID);
 
 				GamesToFarm.Add(new Game(appID, name, hours, cardsRemaining, badgeLevel));
+
+				// Check if smart resume should be triggered
+				CheckSmartResumeCondition();
 			} else {
 				Task task = CheckGame(appID, name, hours, badgeLevel);
 
@@ -1345,6 +1361,9 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			Bot.BotDatabase.FarmingRiskyPrioritizedAppIDs.Add(appID);
 
 			GamesToFarm.Add(game);
+
+			// Check if smart resume should be triggered
+			CheckSmartResumeCondition();
 
 			if ((game.HoursPlayed >= Bot.BotConfig.HoursUntilCardDrops) || (GamesToFarm.Count >= ArchiHandler.MaxGamesPlayedConcurrently)) {
 				// Avoid further parsing in this risky method, we have enough for now

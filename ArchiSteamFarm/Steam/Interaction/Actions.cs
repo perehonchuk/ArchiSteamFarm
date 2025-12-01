@@ -323,7 +323,13 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			}
 		}
 
-		return (true, Strings.BotAutomaticIdlingNowPaused);
+		string pauseMessage = Strings.BotAutomaticIdlingNowPaused;
+
+		if (!permanent) {
+			pauseMessage += " (Note: will auto-resume if farming queue reaches 10 games)";
+		}
+
+		return (true, pauseMessage);
 	}
 
 	[PublicAPI]
@@ -408,6 +414,9 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		if (!Bot.CardsFarmer.Paused) {
 			return (false, Strings.BotAutomaticIdlingResumedAlready);
 		}
+
+		// Cancel any pending timer-based resume
+		CardsFarmerResumeTimer?.Change(Timeout.Infinite, Timeout.Infinite);
 
 		Utilities.InBackground(() => Bot.CardsFarmer.Resume(true));
 
