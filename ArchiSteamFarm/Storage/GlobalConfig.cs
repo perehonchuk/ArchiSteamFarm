@@ -49,6 +49,9 @@ public sealed class GlobalConfig {
 	public const bool DefaultAutoRestart = true;
 
 	[PublicAPI]
+	public const byte DefaultBotStartupDelay = 0;
+
+	[PublicAPI]
 	public const string? DefaultCommandPrefix = "!";
 
 	[PublicAPI]
@@ -199,6 +202,10 @@ public sealed class GlobalConfig {
 	[JsonInclude]
 	[SwaggerItemsMinMax(MinimumUint = 1, MaximumUint = uint.MaxValue)]
 	public ImmutableHashSet<uint> Blacklist { get; init; } = DefaultBlacklist;
+
+	[JsonInclude]
+	[Range(byte.MinValue, byte.MaxValue)]
+	public byte BotStartupDelay { get; init; } = DefaultBotStartupDelay;
 
 	[JsonInclude]
 	public string? CommandPrefix { get; init; } = DefaultCommandPrefix;

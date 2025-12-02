@@ -3191,7 +3191,30 @@ public sealed class Commands {
 			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
 		}
 
-		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseStart(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
+		IList<string?> results;
+
+		// Check if staggered startup is configured
+		if ((ASF.GlobalConfig?.BotStartupDelay ?? 0) > 0) {
+			// Sequential startup with delay between each bot
+			List<Bot> orderedBots = bots.OrderBy(static bot => bot.BotName, Bot.BotsComparer).ToList();
+			List<string?> sequentialResults = new(orderedBots.Count);
+
+			for (int i = 0; i < orderedBots.Count; i++) {
+				Bot bot = orderedBots[i];
+				string? result = bot.Commands.ResponseStart(GetProxyAccess(bot, access, steamID));
+				sequentialResults.Add(result);
+
+				// Add delay between bots, except after the last one
+				if (i < orderedBots.Count - 1) {
+					await Task.Delay(TimeSpan.FromSeconds(ASF.GlobalConfig.BotStartupDelay)).ConfigureAwait(false);
+				}
+			}
+
+			results = sequentialResults;
+		} else {
+			// Parallel startup (default behavior)
+			results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseStart(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
+		}
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

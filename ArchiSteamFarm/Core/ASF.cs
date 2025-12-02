@@ -697,7 +697,23 @@ public static class ASF {
 				break;
 		}
 
-		await Utilities.InParallel(botNames.OrderBy(static botName => botName, Bot.BotsComparer).Select(Bot.RegisterBot)).ConfigureAwait(false);
+		// Check if staggered startup is configured
+		if (GlobalConfig.BotStartupDelay > 0) {
+			// Sequential startup with delay between each bot
+			List<string> orderedBotNames = botNames.OrderBy(static botName => botName, Bot.BotsComparer).ToList();
+
+			for (int i = 0; i < orderedBotNames.Count; i++) {
+				await Bot.RegisterBot(orderedBotNames[i]).ConfigureAwait(false);
+
+				// Add delay between bots, except after the last one
+				if (i < orderedBotNames.Count - 1) {
+					await Task.Delay(TimeSpan.FromSeconds(GlobalConfig.BotStartupDelay)).ConfigureAwait(false);
+				}
+			}
+		} else {
+			// Parallel startup (default behavior)
+			await Utilities.InParallel(botNames.OrderBy(static botName => botName, Bot.BotsComparer).Select(Bot.RegisterBot)).ConfigureAwait(false);
+		}
 	}
 
 	private static async Task UpdateAndRestart() {
