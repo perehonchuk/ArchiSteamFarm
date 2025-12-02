@@ -139,6 +139,8 @@ public sealed class Commands {
 						return ResponseFarmingBlacklist(access);
 					case "FQ":
 						return ResponseFarmingQueue(access);
+					case "FSTATS":
+						return ResponseFarmingStatistics(access);
 					case "HELP":
 						return ResponseHelp(access);
 					case "INVENTORY":
@@ -222,6 +224,8 @@ public sealed class Commands {
 						return ResponseFarmingBlacklistRemove(access, args[1]);
 					case "FQ":
 						return await ResponseFarmingQueue(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "FSTATS":
+						return await ResponseFarmingStatistics(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "FQADD" when args.Length > 2:
 						return await ResponseFarmingQueueAdd(access, args[1], Utilities.GetArgsAsText(args, 2, ","), steamID).ConfigureAwait(false);
 					case "FQADD":
@@ -1460,6 +1464,38 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseFarmingQueue(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private string? ResponseFarmingStatistics(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		return Bot.CardsFarmer.GetCardDropStatistics();
+	}
+
+	private static async Task<string?> ResponseFarmingStatistics(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseFarmingStatistics(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

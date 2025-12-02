@@ -134,6 +134,20 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	internal ConcurrentHashSet<uint> FarmingRiskyPrioritizedAppIDs { get; private init; } = [];
 
+	[JsonInclude]
+	internal bool CardDropTrackingEnabled {
+		get;
+
+		set {
+			if (field == value) {
+				return;
+			}
+
+			field = value;
+			Utilities.InBackground(Save);
+		}
+	} = true;
+
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]

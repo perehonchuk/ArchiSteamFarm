@@ -54,6 +54,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
+	private const byte CardDropHistoryMaxEntries = 100; // Maximum number of card drop history entries to keep per bot
+	private const byte CardDropPredictionWindowHours = 24; // Time window for card drop pattern analysis
 
 	[PublicAPI]
 	public static readonly FrozenSet<uint> SalesBlacklist = [267420, 303700, 335590, 368020, 425280, 480730, 566020, 639900, 762800, 876740, 991980, 1195670, 1343890, 1465680, 1658760, 1797760, 2021850, 2243720, 2459330, 2640280, 2861690, 2861720, 3558920];
@@ -130,6 +132,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private readonly Timer? IdleFarmingTimer;
 
 	private readonly ConcurrentDictionary<uint, DateTime> LocallyIgnoredAppIDs = new();
+	private readonly ConcurrentDictionary<uint, List<CardDropEvent>> CardDropHistory = new();
 
 	private IEnumerable<ConcurrentDictionary<uint, DateTime>> SourcesOfIgnoredAppIDs {
 		get {
@@ -1394,7 +1397,13 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			return null;
 		}
 
+		ushort previousCardsRemaining = game.CardsRemaining;
 		game.CardsRemaining = latestGameData.CardsRemaining;
+
+		// Track card drop if cards decreased
+		if (previousCardsRemaining > game.CardsRemaining) {
+			TrackCardDrop(game.AppID, game.GameName, previousCardsRemaining, game.CardsRemaining);
+		}
 
 		Bot.ArchiLogger.LogGenericInfo(Strings.FormatIdlingStatusForGame(game.AppID, game.GameName, game.CardsRemaining));
 
@@ -1548,5 +1557,114 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// We must call ToList() here as we can't do in-place replace
 		List<Game> gamesToFarm = orderedGamesToFarm.ToList();
 		GamesToFarm.ReplaceWith(gamesToFarm);
+	}
+
+	internal string? GetCardDropStatistics() {
+		if (CardDropHistory.IsEmpty) {
+			return Bot.ArchiLogger.FormatBotResponse("No card drop history available yet.");
+		}
+
+		StringBuilder result = new();
+		result.AppendLine(Bot.ArchiLogger.FormatBotResponse($"Card Drop Statistics (tracking {CardDropHistory.Count} games):"));
+		result.AppendLine();
+
+		int totalGames = 0;
+		int totalCardsDropped = 0;
+
+		foreach (KeyValuePair<uint, List<CardDropEvent>> entry in CardDropHistory.OrderByDescending(e => e.Value.Count).Take(10)) {
+			List<CardDropEvent> events;
+
+			lock (entry.Value) {
+				events = [..entry.Value];
+			}
+
+			if (events.Count == 0) {
+				continue;
+			}
+
+			totalGames++;
+
+			CardDropEvent latestEvent = events[^1];
+			int cardsDropped = events.Sum(e => e.CardsDropped);
+			totalCardsDropped += cardsDropped;
+
+			result.AppendLine($"  {latestEvent.GameName} (AppID: {entry.Key})");
+			result.AppendLine($"    Total drops: {cardsDropped} cards from {events.Count} drop event(s)");
+
+			if (events.Count >= 2) {
+				double totalMinutes = (events[^1].Timestamp - events[0].Timestamp).TotalMinutes;
+				double averageMinutes = totalMinutes / (events.Count - 1);
+				result.AppendLine($"    Average time between drops: {averageMinutes:F1} minutes");
+			}
+
+			result.AppendLine($"    Cards remaining: {latestEvent.CardsRemaining}");
+			result.AppendLine();
+		}
+
+		result.AppendLine($"Overall: {totalCardsDropped} total cards dropped across {totalGames} games");
+
+		return result.ToString();
+	}
+
+	private void TrackCardDrop(uint appID, string gameName, ushort cardsBefore, ushort cardsAfter) {
+		ArgumentOutOfRangeException.ThrowIfZero(appID);
+		ArgumentException.ThrowIfNullOrEmpty(gameName);
+
+		if (!Bot.BotDatabase.CardDropTrackingEnabled) {
+			return;
+		}
+
+		if (cardsBefore <= cardsAfter) {
+			// No cards were actually dropped
+			return;
+		}
+
+		ushort cardsDropped = (ushort) (cardsBefore - cardsAfter);
+		CardDropEvent dropEvent = new(DateTime.UtcNow, gameName, cardsDropped, cardsAfter);
+
+		List<CardDropEvent> history = CardDropHistory.GetOrAdd(appID, _ => []);
+
+		lock (history) {
+			history.Add(dropEvent);
+
+			// Keep only the most recent entries
+			if (history.Count > CardDropHistoryMaxEntries) {
+				history.RemoveAt(0);
+			}
+		}
+
+		Bot.ArchiLogger.LogGenericInfo($"Card drop detected for {gameName} ({appID}): {cardsDropped} card(s) dropped, {cardsAfter} remaining");
+
+		// Analyze drop pattern within the prediction window
+		DateTime windowStart = DateTime.UtcNow.AddHours(-CardDropPredictionWindowHours);
+		List<CardDropEvent> recentDrops;
+
+		lock (history) {
+			recentDrops = history.Where(e => e.Timestamp >= windowStart).ToList();
+		}
+
+		if (recentDrops.Count >= 3) {
+			double averageMinutesBetweenDrops = 0;
+
+			for (int i = 1; i < recentDrops.Count; i++) {
+				averageMinutesBetweenDrops += (recentDrops[i].Timestamp - recentDrops[i - 1].Timestamp).TotalMinutes;
+			}
+
+			averageMinutesBetweenDrops /= recentDrops.Count - 1;
+
+			Bot.ArchiLogger.LogGenericInfo($"Card drop pattern for {gameName}: Average {averageMinutesBetweenDrops:F1} minutes between drops (based on {recentDrops.Count} recent drops)");
+
+			if (cardsAfter > 0) {
+				TimeSpan predictedTime = TimeSpan.FromMinutes(averageMinutesBetweenDrops);
+				Bot.ArchiLogger.LogGenericInfo($"Next card drop predicted in approximately {predictedTime.ToHumanReadable()}");
+			}
+		}
+	}
+
+	internal sealed class CardDropEvent(DateTime timestamp, string gameName, ushort cardsDropped, ushort cardsRemaining) {
+		internal DateTime Timestamp { get; } = timestamp;
+		internal string GameName { get; } = gameName;
+		internal ushort CardsDropped { get; } = cardsDropped;
+		internal ushort CardsRemaining { get; } = cardsRemaining;
 	}
 }
