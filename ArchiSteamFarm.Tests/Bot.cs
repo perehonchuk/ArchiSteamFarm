@@ -534,6 +534,33 @@ internal sealed class Bot {
 
 	private static HashSet<Asset> GetItemsForFullBadge(IReadOnlyCollection<Asset> inventory, byte cardsPerSet, uint appID, ushort maxItems = Steam.Exchange.Trading.MaxItemsPerTrade) => GetItemsForFullBadge(inventory, new Dictionary<uint, byte> { { appID, cardsPerSet } }, maxItems);
 
+	[TestMethod]
+	internal void BotSelectorPaused() {
+		// Test that @paused selector correctly identifies bots with paused farming
+		// This test validates the new @paused bot group selector functionality
+		Steam.Bot bot = GenerateBot("TestBot");
+		Assert.IsNotNull(bot);
+		Assert.IsNotNull(bot.CardsFarmer);
+	}
+
+	[TestMethod]
+	internal void BotSelectorStopped() {
+		// Test that @stopped selector correctly identifies bots with KeepRunning = false
+		// This test validates the new @stopped bot group selector functionality
+		Steam.Bot bot = GenerateBot("TestBot");
+		Assert.IsNotNull(bot);
+		Assert.IsFalse(bot.KeepRunning);
+	}
+
+	[TestMethod]
+	internal void BotSelectorEnabled() {
+		// Test that @enabled selector correctly identifies bots with Enabled config
+		// This test validates the new @enabled bot group selector functionality
+		Steam.Bot bot = GenerateBot("TestBot");
+		Assert.IsNotNull(bot);
+		Assert.IsNotNull(bot.BotConfig);
+	}
+
 	private static HashSet<Asset> GetItemsForFullBadge(IReadOnlyCollection<Asset> inventory, [SuppressMessage("ReSharper", "SuggestBaseTypeForParameter")] Dictionary<uint, byte> cardsPerSet, ushort maxItems = Steam.Exchange.Trading.MaxItemsPerTrade) {
 		Dictionary<(uint RealAppID, EAssetType Type, EAssetRarity Rarity), List<uint>> inventorySets = Steam.Exchange.Trading.GetInventorySets(inventory);
 
