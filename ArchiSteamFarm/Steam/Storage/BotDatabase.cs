@@ -194,6 +194,16 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	private Dictionary<string, byte> GamesRedemptionRetryCount { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	private Dictionary<string, DateTime> GamesRedemptionLastAttempt { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
 	private BotDatabase(string filePath) : this() {
 		ArgumentException.ThrowIfNullOrEmpty(filePath);
 
@@ -315,6 +325,8 @@ public sealed class BotDatabase : GenericDatabase {
 				}
 
 				GamesToRedeemInBackground[key] = name;
+				GamesRedemptionRetryCount[key] = 0;
+				GamesRedemptionLastAttempt[key] = DateTime.MinValue;
 			}
 		}
 
@@ -328,6 +340,8 @@ public sealed class BotDatabase : GenericDatabase {
 			}
 
 			GamesToRedeemInBackground.Clear();
+			GamesRedemptionRetryCount.Clear();
+			GamesRedemptionLastAttempt.Clear();
 		}
 
 		Utilities.InBackground(Save);
@@ -381,12 +395,52 @@ public sealed class BotDatabase : GenericDatabase {
 
 	internal (string? Key, string? Name) GetGameToRedeemInBackground() {
 		lock (GamesToRedeemInBackground) {
+			DateTime now = DateTime.UtcNow;
+
 			foreach ((string key, string name) in GamesToRedeemInBackground) {
+				// Skip games that are in retry cooldown
+				if (GamesRedemptionLastAttempt.TryGetValue(key, out DateTime lastAttempt)) {
+					if (GamesRedemptionRetryCount.TryGetValue(key, out byte retryCount) && retryCount > 0) {
+						// Calculate exponential backoff: 5 minutes * 2^(retryCount-1)
+						TimeSpan cooldown = TimeSpan.FromMinutes(5 * Math.Pow(2, retryCount - 1));
+
+						if (now < lastAttempt.Add(cooldown)) {
+							// Still in cooldown, skip this game
+							continue;
+						}
+					}
+				}
+
 				return (key, name);
 			}
 		}
 
 		return (null, null);
+	}
+
+	internal (uint Total, uint InCooldown, uint Failed) GetGamesRedemptionStatistics() {
+		lock (GamesToRedeemInBackground) {
+			uint total = (uint) GamesToRedeemInBackground.Count;
+			uint inCooldown = 0;
+			uint failed = 0;
+			DateTime now = DateTime.UtcNow;
+
+			foreach (string key in GamesToRedeemInBackground.Keys) {
+				if (GamesRedemptionRetryCount.TryGetValue(key, out byte retryCount) && retryCount > 0) {
+					failed++;
+
+					if (GamesRedemptionLastAttempt.TryGetValue(key, out DateTime lastAttempt)) {
+						TimeSpan cooldown = TimeSpan.FromMinutes(5 * Math.Pow(2, retryCount - 1));
+
+						if (now < lastAttempt.Add(cooldown)) {
+							inCooldown++;
+						}
+					}
+				}
+			}
+
+			return (total, inCooldown, failed);
+		}
 	}
 
 	internal static bool IsValidGameToRedeemInBackground(string key, string name) => !string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(name) && Utilities.IsValidCdKey(key);
@@ -405,6 +459,31 @@ public sealed class BotDatabase : GenericDatabase {
 		lock (GamesToRedeemInBackground) {
 			if (!GamesToRedeemInBackground.Remove(key)) {
 				return;
+			}
+
+			GamesRedemptionRetryCount.Remove(key);
+			GamesRedemptionLastAttempt.Remove(key);
+		}
+
+		Utilities.InBackground(Save);
+	}
+
+	internal void RecordGameRedemptionAttempt(string key, bool shouldRetry) {
+		ArgumentException.ThrowIfNullOrEmpty(key);
+
+		lock (GamesToRedeemInBackground) {
+			if (!GamesToRedeemInBackground.ContainsKey(key)) {
+				return;
+			}
+
+			GamesRedemptionLastAttempt[key] = DateTime.UtcNow;
+
+			if (shouldRetry) {
+				byte currentRetries = GamesRedemptionRetryCount.TryGetValue(key, out byte count) ? count : (byte) 0;
+
+				if (currentRetries < byte.MaxValue) {
+					GamesRedemptionRetryCount[key] = (byte) (currentRetries + 1);
+				}
 			}
 		}
 

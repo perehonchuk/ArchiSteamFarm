@@ -1153,8 +1153,11 @@ public sealed class Commands {
 		}
 
 		uint count = Bot.GamesToRedeemInBackgroundCount;
+		(uint total, uint inCooldown, uint failed) = Bot.BotDatabase.GetGamesRedemptionStatistics();
 
-		return FormatBotResponse(Strings.FormatBotGamesToRedeemInBackgroundCount(count));
+		string status = count > 0 ? $" (Failed/Retrying: {failed}, In Cooldown: {inCooldown})" : "";
+
+		return FormatBotResponse(Strings.FormatBotGamesToRedeemInBackgroundCount(count) + status);
 	}
 
 	private static async Task<string?> ResponseBackgroundGamesRedeemer(EAccess access, string botNames, ulong steamID = 0) {

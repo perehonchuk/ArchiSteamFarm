@@ -3631,13 +3631,16 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				(string? key, string? name) = BotDatabase.GetGameToRedeemInBackground();
 
 				if (string.IsNullOrEmpty(key)) {
-					// No more games to redeem left, possible due to e.g. queue purge
+					// No more games to redeem left, possible due to e.g. queue purge or all in cooldown
 					break;
 				}
 
 				CStore_RegisterCDKey_Response? response = await Actions.RedeemKey(key).ConfigureAwait(false);
 
 				if (response == null) {
+					// Network or timeout error - mark for retry with exponential backoff
+					BotDatabase.RecordGameRedemptionAttempt(key, true);
+
 					continue;
 				}
 
@@ -3670,15 +3673,25 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				bool rateLimited = false;
 				bool redeemed = false;
+				bool shouldRetry = false;
 
 				switch (purchaseResultDetail) {
 					case EPurchaseResultDetail.AccountLocked:
 					case EPurchaseResultDetail.AlreadyPurchased:
 					case EPurchaseResultDetail.CannotRedeemCodeFromClient:
-					case EPurchaseResultDetail.DoesNotOwnRequiredApp:
 					case EPurchaseResultDetail.NoWallet:
 					case EPurchaseResultDetail.RestrictedCountry:
+						// Permanent failures - don't retry
+						break;
+					case EPurchaseResultDetail.DoesNotOwnRequiredApp:
+						// Temporary failure - might succeed later if base game is redeemed
+						shouldRetry = true;
+
+						break;
 					case EPurchaseResultDetail.Timeout:
+						// Transient failure - retry with backoff
+						shouldRetry = true;
+
 						break;
 					case EPurchaseResultDetail.BadActivationCode:
 					case EPurchaseResultDetail.DuplicateActivationCode:
@@ -3697,35 +3710,47 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				}
 
 				if (rateLimited) {
-					break;
-				}
-
-				BotDatabase.RemoveGameToRedeemInBackground(key);
-
-				// If user omitted the name or intentionally provided the same name as key, replace it with the Steam result
-				name ??= key;
-
-				if (((name.Length == 0) || name.Equals(key, StringComparison.OrdinalIgnoreCase)) && (items?.Count > 0)) {
-					name = string.Join(", ", items.Values);
-				}
-
-				string logEntry = $"{name}{DefaultBackgroundKeysRedeemerSeparator}[{purchaseResultDetail}]{(items?.Count > 0 ? $"{DefaultBackgroundKeysRedeemerSeparator}{string.Join(", ", items)}" : "")}{DefaultBackgroundKeysRedeemerSeparator}{key}";
-
-				string filePath = GetFilePath(redeemed ? EFileType.KeysToRedeemUsed : EFileType.KeysToRedeemUnused);
-
-				if (string.IsNullOrEmpty(filePath)) {
-					ArchiLogger.LogNullError(filePath);
-
-					return;
-				}
-
-				try {
-					await File.AppendAllTextAsync(filePath, $"{logEntry}{Environment.NewLine}").ConfigureAwait(false);
-				} catch (Exception e) {
-					ArchiLogger.LogGenericException(e);
-					ArchiLogger.LogGenericError(Strings.FormatContent(logEntry));
+					// Mark for retry but don't remove from queue
+					BotDatabase.RecordGameRedemptionAttempt(key, true);
 
 					break;
+				}
+
+				if (shouldRetry) {
+					// Record attempt and keep in queue for retry with exponential backoff
+					BotDatabase.RecordGameRedemptionAttempt(key, true);
+				} else {
+					// Permanent outcome - remove from queue
+					BotDatabase.RemoveGameToRedeemInBackground(key);
+				}
+
+				// Only log to file if this is a final result (not being retried)
+				if (!shouldRetry && !rateLimited) {
+					// If user omitted the name or intentionally provided the same name as key, replace it with the Steam result
+					name ??= key;
+
+					if (((name.Length == 0) || name.Equals(key, StringComparison.OrdinalIgnoreCase)) && (items?.Count > 0)) {
+						name = string.Join(", ", items.Values);
+					}
+
+					string logEntry = $"{name}{DefaultBackgroundKeysRedeemerSeparator}[{purchaseResultDetail}]{(items?.Count > 0 ? $"{DefaultBackgroundKeysRedeemerSeparator}{string.Join(", ", items)}" : "")}{DefaultBackgroundKeysRedeemerSeparator}{key}";
+
+					string filePath = GetFilePath(redeemed ? EFileType.KeysToRedeemUsed : EFileType.KeysToRedeemUnused);
+
+					if (string.IsNullOrEmpty(filePath)) {
+						ArchiLogger.LogNullError(filePath);
+
+						return;
+					}
+
+					try {
+						await File.AppendAllTextAsync(filePath, $"{logEntry}{Environment.NewLine}").ConfigureAwait(false);
+					} catch (Exception e) {
+						ArchiLogger.LogGenericException(e);
+						ArchiLogger.LogGenericError(Strings.FormatContent(logEntry));
+
+						break;
+					}
 				}
 			}
 
