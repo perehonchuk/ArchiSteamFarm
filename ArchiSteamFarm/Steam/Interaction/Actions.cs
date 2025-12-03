@@ -479,7 +479,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
-	public async Task<(bool Success, string Message)> SendInventory(uint appID = Asset.SteamAppID, ulong contextID = Asset.SteamCommunityContextID, ulong targetSteamID = 0, string? tradeToken = null, string? customMessage = null, Func<Asset, bool>? filterFunction = null, ushort itemsPerTrade = Trading.MaxItemsPerTrade) {
+	public async Task<(bool Success, string Message)> SendInventory(uint appID = Asset.SteamAppID, ulong contextID = Asset.SteamCommunityContextID, ulong targetSteamID = 0, string? tradeToken = null, string? customMessage = null, Func<Asset, bool>? filterFunction = null, ushort itemsPerTrade = Trading.MaxItemsPerTrade, uint? maxItemCount = null) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 		ArgumentOutOfRangeException.ThrowIfZero(contextID);
 
@@ -521,6 +521,33 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		if (inventory.Count == 0) {
 			return (false, Strings.FormatErrorIsEmpty(nameof(inventory)));
+		}
+
+		// Apply maximum item count limit if specified
+		if (maxItemCount.HasValue && (maxItemCount.Value > 0)) {
+			uint totalItems = 0;
+			HashSet<Asset> limitedInventory = [];
+
+			foreach (Asset item in inventory) {
+				uint itemsToInclude = Math.Min(item.Amount, maxItemCount.Value - totalItems);
+
+				if (itemsToInclude > 0) {
+					Asset limitedItem = item.DeepClone();
+					limitedItem.Amount = itemsToInclude;
+					limitedInventory.Add(limitedItem);
+					totalItems += itemsToInclude;
+				}
+
+				if (totalItems >= maxItemCount.Value) {
+					break;
+				}
+			}
+
+			inventory = limitedInventory;
+
+			if (inventory.Count == 0) {
+				return (false, Strings.FormatErrorIsEmpty(nameof(inventory)));
+			}
 		}
 
 		return await SendInventory(inventory, targetSteamID, tradeToken, customMessage, itemsPerTrade).ConfigureAwait(false);

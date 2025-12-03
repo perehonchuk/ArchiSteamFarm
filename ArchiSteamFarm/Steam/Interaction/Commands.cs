@@ -258,6 +258,10 @@ public sealed class Commands {
 						return await ResponseLootByRealAppIDs(access, args[1], Utilities.GetArgsAsText(args, 2, ","), true, steamID).ConfigureAwait(false);
 					case "LOOT%":
 						return await ResponseLootByRealAppIDs(access, args[1], true).ConfigureAwait(false);
+					case "LOOT$" when args.Length > 2:
+						return await ResponseLootWithQuantityLimit(access, args[1], Utilities.GetArgsAsText(args, 2, ","), steamID).ConfigureAwait(false);
+					case "LOOT$":
+						return await ResponseLootWithQuantityLimit(access, args[1]).ConfigureAwait(false);
 					case "MAB":
 						return await ResponseMatchActivelyBlacklist(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "MABADD" when args.Length > 2:
@@ -1870,6 +1874,55 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseLootByRealAppIDs(GetProxyAccess(bot, access, steamID), realAppIDsText, exclude))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponseLootWithQuantityLimit(EAccess access, string maxItemCountText) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(maxItemCountText);
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		if (Bot.BotConfig.LootableTypes.Count == 0) {
+			return FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(Bot.BotConfig.LootableTypes)));
+		}
+
+		if (!uint.TryParse(maxItemCountText, out uint maxItemCount) || (maxItemCount == 0)) {
+			return FormatBotResponse(Strings.FormatErrorIsInvalid(nameof(maxItemCount)));
+		}
+
+		(bool success, string message) = await Bot.Actions.SendInventory(filterFunction: item => Bot.BotConfig.LootableTypes.Contains(item.Type), maxItemCount: maxItemCount).ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static async Task<string?> ResponseLootWithQuantityLimit(EAccess access, string botNames, string maxItemCountText, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(maxItemCountText);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseLootWithQuantityLimit(GetProxyAccess(bot, access, steamID), maxItemCountText))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
