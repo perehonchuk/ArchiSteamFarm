@@ -336,6 +336,10 @@ public sealed class Commands {
 						return await ResponseTransfer(access, args[1], Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 					case "TRANSFER":
 						return await ResponseTransfer(access, args[1]).ConfigureAwait(false);
+					case "TRANSFER?" when args.Length > 2:
+						return await ResponseTransferPreview(access, args[1], Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
+					case "TRANSFER?":
+						return await ResponseTransferPreview(access, args[1]).ConfigureAwait(false);
 					case "TRANSFER^" when args.Length > 4:
 						return await ResponseAdvancedTransfer(access, args[1], args[2], args[3], Utilities.GetArgsAsText(message, 4), steamID).ConfigureAwait(false);
 					case "TRANSFER^" when args.Length > 3:
@@ -3500,6 +3504,88 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseTransfer(GetProxyAccess(bot, access, steamID), botNameTo))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponseTransferPreview(EAccess access, string botNameTo) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNameTo);
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		if (Bot.BotConfig.TransferableTypes.Count == 0) {
+			return FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(Bot.BotConfig.TransferableTypes)));
+		}
+
+		Bot? targetBot = Bot.GetBot(botNameTo);
+
+		if (targetBot == null) {
+			return access >= EAccess.Owner ? FormatBotResponse(Strings.FormatBotNotFound(botNameTo)) : null;
+		}
+
+		if (!targetBot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.TargetBotNotConnected);
+		}
+
+		if (targetBot.SteamID == Bot.SteamID) {
+			return FormatBotResponse(Strings.BotSendingTradeToYourself);
+		}
+
+		(bool success, string message, IReadOnlyCollection<Asset>? items) = await Bot.Actions.PreviewInventory(filterFunction: item => Bot.BotConfig.TransferableTypes.Contains(item.Type)).ConfigureAwait(false);
+
+		if (!success || (items == null)) {
+			return FormatBotResponse(Strings.FormatWarningFailedWithError(message));
+		}
+
+		Dictionary<(uint RealAppID, Asset.EType Type, Asset.ERarity Rarity), int> itemCounts = [];
+
+		foreach (Asset item in items) {
+			(uint RealAppID, Asset.EType Type, Asset.ERarity Rarity) key = (item.RealAppID, item.Type, item.Rarity);
+
+			if (itemCounts.TryGetValue(key, out int count)) {
+				itemCounts[key] = count + (int) item.Amount;
+			} else {
+				itemCounts[key] = (int) item.Amount;
+			}
+		}
+
+		StringBuilder response = new();
+		response.AppendLine($"Preview: Would transfer {items.Count} items ({items.Sum(static item => item.Amount)} total) to {botNameTo}:");
+
+		foreach (((uint realAppID, Asset.EType type, Asset.ERarity rarity), int count) in itemCounts.OrderByDescending(static kv => kv.Value)) {
+			response.AppendLine($"  - {count}x {type} (AppID: {realAppID}, Rarity: {rarity})");
+		}
+
+		return FormatBotResponse(response.ToString());
+	}
+
+	private static async Task<string?> ResponseTransferPreview(EAccess access, string botNames, string botNameTo, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(botNameTo);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseTransferPreview(GetProxyAccess(bot, access, steamID), botNameTo))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

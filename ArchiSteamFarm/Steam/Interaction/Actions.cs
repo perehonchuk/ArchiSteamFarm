@@ -479,6 +479,54 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public async Task<(bool Success, string Message, IReadOnlyCollection<Asset>? Items)> PreviewInventory(uint appID = Asset.SteamAppID, ulong contextID = Asset.SteamCommunityContextID, Func<Asset, bool>? filterFunction = null) {
+		ArgumentOutOfRangeException.ThrowIfZero(appID);
+		ArgumentOutOfRangeException.ThrowIfZero(contextID);
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return (false, Strings.BotNotConnected, null);
+		}
+
+		filterFunction ??= static _ => true;
+
+		HashSet<Asset> inventory;
+
+		// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
+		lock (TradingSemaphore) {
+			if (TradingScheduled) {
+				return (false, Strings.ErrorAborted, null);
+			}
+
+			TradingScheduled = true;
+		}
+
+		using (await GetTradingLock().ConfigureAwait(false)) {
+			// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
+			lock (TradingSemaphore) {
+				TradingScheduled = false;
+			}
+
+			try {
+				inventory = await Bot.ArchiHandler.GetMyInventoryAsync(appID, contextID, true).Where(item => filterFunction(item)).ToHashSetAsync().ConfigureAwait(false);
+			} catch (TimeoutException e) {
+				Bot.ArchiLogger.LogGenericWarningException(e);
+
+				return (false, Strings.FormatWarningFailedWithError(e.Message), null);
+			} catch (Exception e) {
+				Bot.ArchiLogger.LogGenericException(e);
+
+				return (false, Strings.FormatWarningFailedWithError(e.Message), null);
+			}
+		}
+
+		if (inventory.Count == 0) {
+			return (false, Strings.FormatErrorIsEmpty(nameof(inventory)), null);
+		}
+
+		return (true, $"Preview: {inventory.Count} items would be transferred", inventory);
+	}
+
+	[PublicAPI]
 	public async Task<(bool Success, string Message)> SendInventory(uint appID = Asset.SteamAppID, ulong contextID = Asset.SteamCommunityContextID, ulong targetSteamID = 0, string? tradeToken = null, string? customMessage = null, Func<Asset, bool>? filterFunction = null, ushort itemsPerTrade = Trading.MaxItemsPerTrade) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 		ArgumentOutOfRangeException.ThrowIfZero(contextID);
