@@ -1682,7 +1682,7 @@ public sealed class Commands {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
 
-		if (access < EAccess.Operator) {
+		if (access < EAccess.Trusted) {
 			return null;
 		}
 
@@ -2013,7 +2013,7 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(nickname);
 
-		if (access < EAccess.Master) {
+		if (access < EAccess.Trusted) {
 			return null;
 		}
 
@@ -2426,7 +2426,7 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(privacySettingsText);
 
-		if (access < EAccess.Master) {
+		if (access < EAccess.Trusted) {
 			return null;
 		}
 

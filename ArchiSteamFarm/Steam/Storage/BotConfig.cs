@@ -697,6 +697,7 @@ public sealed class BotConfig {
 	public enum EAccess : byte {
 		None,
 		FamilySharing,
+		Trusted,
 		Operator,
 		Master
 	}

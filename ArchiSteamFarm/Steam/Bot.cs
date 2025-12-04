@@ -495,6 +495,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return permission switch {
 				BotConfig.EAccess.None => EAccess.None,
 				BotConfig.EAccess.FamilySharing => EAccess.FamilySharing,
+				BotConfig.EAccess.Trusted => EAccess.Trusted,
 				BotConfig.EAccess.Operator => EAccess.Operator,
 				BotConfig.EAccess.Master => EAccess.Master,
 				_ => throw new InvalidOperationException(Strings.FormatWarningUnknownValuePleaseReport(nameof(permission), permission))

@@ -29,6 +29,7 @@ namespace ArchiSteamFarm.Steam;
 public enum EAccess : byte {
 	None,
 	FamilySharing = 10,
+	Trusted = 30,
 	Operator = 50,
 	Master = 100,
 	Owner = 255
