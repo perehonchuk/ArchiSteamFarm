@@ -166,6 +166,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	[PublicAPI]
 	public Trading Trading { get; }
 
+	[JsonInclude]
+	[PublicAPI]
+	public IReadOnlyDictionary<ulong, DateTime> ActiveFamilySharingUsersReadOnly => ActiveFamilySharingUsers;
+
 	internal bool CanReceiveSteamCards => !IsAccountLimited && !IsAccountLocked;
 	internal bool HasLoginCodeReady => !string.IsNullOrEmpty(TwoFactorCode) || !string.IsNullOrEmpty(AuthCode);
 
@@ -180,6 +184,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private readonly SemaphoreSlim SendCompleteTypesSemaphore = new(1, 1);
 	private readonly SteamClient SteamClient;
 	private readonly ConcurrentHashSet<ulong> SteamFamilySharingIDs = [];
+	private readonly ConcurrentDictionary<ulong, DateTime> ActiveFamilySharingUsers = new();
 	private readonly SteamUser SteamUser;
 	private readonly SemaphoreSlim UnpackBoosterPacksSemaphore = new(1, 1);
 
@@ -3354,6 +3359,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		// Old status for these doesn't matter, we'll update them if needed
 		LoginFailures = 0;
 		LibraryLocked = PlayingBlocked = false;
+		ActiveFamilySharingUsers.Clear();
 
 		if (PlayingWasBlocked && (PlayingWasBlockedTimer == null)) {
 			InitPlayingWasBlockedTimer();
@@ -3524,12 +3530,24 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 
 			LibraryLocked = false;
+
+			// Remove the user from active family sharing users when they stop using the library
+			foreach (ulong steamID in ActiveFamilySharingUsers.Keys.ToList()) {
+				if ((steamID != callback.LibraryLockedBySteamID) && (steamID != SteamID)) {
+					ActiveFamilySharingUsers.TryRemove(steamID, out _);
+				}
+			}
 		} else {
 			if ((callback.LibraryLockedBySteamID == 0) || (callback.LibraryLockedBySteamID == SteamID)) {
 				return;
 			}
 
 			LibraryLocked = true;
+
+			// Track the family sharing user who started using the library
+			if ((callback.LibraryLockedBySteamID != 0) && (callback.LibraryLockedBySteamID != SteamID)) {
+				ActiveFamilySharingUsers[callback.LibraryLockedBySteamID] = DateTime.UtcNow;
+			}
 		}
 
 		await CheckOccupationStatus().ConfigureAwait(false);

@@ -3227,7 +3227,21 @@ public sealed class Commands {
 		}
 
 		if (Bot.PlayingBlocked) {
-			return (FormatBotResponse(Strings.BotStatusPlayingNotAvailable), Bot);
+			string statusMessage = Strings.BotStatusPlayingNotAvailable;
+
+			// Include active family sharing user information when library is locked
+			if (Bot.ActiveFamilySharingUsersReadOnly.Count > 0) {
+				List<string> familySharingInfo = [];
+
+				foreach ((ulong steamID, DateTime since) in Bot.ActiveFamilySharingUsersReadOnly) {
+					TimeSpan duration = DateTime.UtcNow - since;
+					familySharingInfo.Add($"{steamID} (active for {duration.ToHumanReadable()})");
+				}
+
+				statusMessage += $" | Family Sharing: {string.Join(", ", familySharingInfo)}";
+			}
+
+			return (FormatBotResponse(statusMessage), Bot);
 		}
 
 		if (Bot.CardsFarmer.Paused) {
