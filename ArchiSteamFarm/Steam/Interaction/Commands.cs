@@ -46,6 +46,15 @@ using SteamKit2.WebUI.Internal;
 
 namespace ArchiSteamFarm.Steam.Interaction;
 
+// Bot group selectors supported in commands:
+// @all, ASF - All bots
+// @farming - Bots currently farming cards
+// @idle - Bots not farming cards
+// @offline - Bots not connected to Steam
+// @online - Bots connected to Steam
+// @paused - Bots with card farming paused
+// @enabled - Bots that are currently enabled (KeepRunning)
+// @stopped - Bots that are currently stopped (!KeepRunning)
 public sealed class Commands {
 	private const ushort SteamTypingStatusDelay = 10 * 1000; // Steam client broadcasts typing status each 10 seconds
 
