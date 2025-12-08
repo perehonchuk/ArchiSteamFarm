@@ -121,6 +121,8 @@ public sealed class Commands {
 				switch (args[0].ToUpperInvariant()) {
 					case "2FA":
 						return await Response2FA(access).ConfigureAwait(false);
+					case "2FALIST":
+						return await Response2FAList(access).ConfigureAwait(false);
 					case "2FANO":
 						return await Response2FAConfirm(access, false).ConfigureAwait(false);
 					case "2FAOK":
@@ -190,10 +192,20 @@ public sealed class Commands {
 				switch (args[0].ToUpperInvariant()) {
 					case "2FA":
 						return await Response2FA(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "2FALIST":
+						return await Response2FAList(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "2FANO":
 						return await Response2FAConfirm(access, Utilities.GetArgsAsText(args, 1, ","), false, steamID).ConfigureAwait(false);
+					case "2FANO+" when args.Length > 2:
+						return await Response2FAConfirmSelective(access, args[1], Utilities.GetArgsAsText(args, 2, ","), false, steamID).ConfigureAwait(false);
+					case "2FANO+":
+						return await Response2FAConfirmSelective(access, args[1], false).ConfigureAwait(false);
 					case "2FAOK":
 						return await Response2FAConfirm(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID).ConfigureAwait(false);
+					case "2FAOK+" when args.Length > 2:
+						return await Response2FAConfirmSelective(access, args[1], Utilities.GetArgsAsText(args, 2, ","), true, steamID).ConfigureAwait(false);
+					case "2FAOK+":
+						return await Response2FAConfirmSelective(access, args[1], true).ConfigureAwait(false);
 					case "AL" or "ADDLICENCE" or "ADDLICENSE" when args.Length > 2:
 						return await ResponseAddLicense(access, args[1], Utilities.GetArgsAsText(args, 2, ","), steamID).ConfigureAwait(false);
 					case "AL" or "ADDLICENCE" or "ADDLICENSE":
@@ -590,6 +602,65 @@ public sealed class Commands {
 		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
 	}
 
+	private async Task<string?> Response2FAList(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		if (!Bot.HasMobileAuthenticator) {
+			return FormatBotResponse(Strings.BotNoASFAuthenticator);
+		}
+
+		(bool success, IReadOnlyCollection<Confirmation>? confirmations, string message) = await Bot.Actions.GetTwoFactorAuthenticationConfirmations().ConfigureAwait(false);
+
+		if (!success || (confirmations == null) || (confirmations.Count == 0)) {
+			return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+		}
+
+		Dictionary<Confirmation.EConfirmationType, int> typeCounts = confirmations.GroupBy(static c => c.ConfirmationType).ToDictionary(static g => g.Key, static g => g.Count());
+
+		StringBuilder result = new();
+		result.AppendLine(FormatBotResponse($"{Strings.FormatConfirmationsCount(confirmations.Count)}:"));
+
+		foreach ((Confirmation.EConfirmationType type, int count) in typeCounts.OrderBy(static kv => kv.Key)) {
+			result.AppendLine(FormatBotResponse($"  {type}: {count}"));
+		}
+
+		return result.ToString().TrimEnd();
+	}
+
+	private static async Task<string?> Response2FAList(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		if ((steamID != 0) && !new SteamID(steamID).IsIndividualAccount) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.Response2FAList(GetProxyAccess(bot, access, steamID)))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
 	private async Task<string?> Response2FAConfirm(EAccess access, bool confirm) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
@@ -626,6 +697,76 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.Response2FAConfirm(GetProxyAccess(bot, access, steamID), confirm))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> Response2FAConfirmSelective(EAccess access, string confirmationTypesText, bool confirm) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(confirmationTypesText);
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		if (!Bot.HasMobileAuthenticator) {
+			return FormatBotResponse(Strings.BotNoASFAuthenticator);
+		}
+
+		string[] typeNames = confirmationTypesText.Split(SharedInfo.ListElementSeparators, StringSplitOptions.RemoveEmptyEntries);
+		HashSet<Confirmation.EConfirmationType> confirmationTypes = [];
+
+		foreach (string typeName in typeNames) {
+			if (!Enum.TryParse(typeName, true, out Confirmation.EConfirmationType confirmationType) || !Enum.IsDefined(confirmationType) || (confirmationType == Confirmation.EConfirmationType.Unknown)) {
+				return FormatBotResponse(Strings.FormatErrorIsInvalid(typeName));
+			}
+
+			confirmationTypes.Add(confirmationType);
+		}
+
+		if (confirmationTypes.Count == 0) {
+			return FormatBotResponse(Strings.ErrorIsEmpty);
+		}
+
+		StringBuilder results = new();
+
+		foreach (Confirmation.EConfirmationType confirmationType in confirmationTypes) {
+			(bool success, _, string message) = await Bot.Actions.HandleTwoFactorAuthenticationConfirmations(confirm, confirmationType).ConfigureAwait(false);
+
+			results.AppendLine(FormatBotResponse($"{confirmationType}: {(success ? message : Strings.FormatWarningFailedWithError(message))}"));
+		}
+
+		return results.ToString().TrimEnd();
+	}
+
+	private static async Task<string?> Response2FAConfirmSelective(EAccess access, string confirmationTypesText, string botNames, bool confirm, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(confirmationTypesText);
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		if ((steamID != 0) && !new SteamID(steamID).IsIndividualAccount) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.Response2FAConfirmSelective(GetProxyAccess(bot, access, steamID), confirmationTypesText, confirm))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
