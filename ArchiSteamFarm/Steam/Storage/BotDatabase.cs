@@ -155,6 +155,21 @@ public sealed class BotDatabase : GenericDatabase {
 	}
 
 	[JsonInclude]
+	[JsonPropertyName("BackingPauseExpiresAt")]
+	internal DateTime? PauseExpiresAt {
+		get;
+
+		set {
+			if (field == value) {
+				return;
+			}
+
+			field = value;
+			Utilities.InBackground(Save);
+		}
+	}
+
+	[JsonInclude]
 	[JsonPropertyName("BackingRefreshToken")]
 	internal string? RefreshToken {
 		get;

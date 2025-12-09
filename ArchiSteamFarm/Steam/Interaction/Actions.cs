@@ -283,6 +283,25 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public string GetPauseStatus() {
+		if (!Bot.CardsFarmer.Paused) {
+			return "Not paused";
+		}
+
+		if (Bot.BotDatabase.PauseExpiresAt.HasValue) {
+			TimeSpan remaining = Bot.BotDatabase.PauseExpiresAt.Value - DateTime.UtcNow;
+
+			if (remaining.TotalSeconds <= 0) {
+				return "Paused (expired, will resume on next check)";
+			}
+
+			return $"Paused (auto-resumes in {remaining.Hours}h {remaining.Minutes}m)";
+		}
+
+		return "Paused (permanent)";
+	}
+
+	[PublicAPI]
 	public static string Hash(ArchiCryptoHelper.EHashingMethod hashingMethod, string stringToHash) {
 		if (!Enum.IsDefined(hashingMethod)) {
 			throw new InvalidEnumArgumentException(nameof(hashingMethod), (int) hashingMethod, typeof(ArchiCryptoHelper.EHashingMethod));

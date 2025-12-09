@@ -128,6 +128,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private readonly SemaphoreSlim FarmingInitializationSemaphore = new(1, 1);
 	private readonly ConcurrentList<Game> GamesToFarm = [];
 	private readonly Timer? IdleFarmingTimer;
+	private readonly Timer PauseExpirationCheckTimer;
 
 	private readonly ConcurrentDictionary<uint, DateTime> LocallyIgnoredAppIDs = new();
 
@@ -171,12 +172,21 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 				TimeSpan.FromHours(idleFarmingPeriod) // Period
 			);
 		}
+
+		// Timer to check for pause expiration every 15 minutes
+		PauseExpirationCheckTimer = new Timer(
+			CheckPauseExpiration,
+			null,
+			TimeSpan.FromMinutes(15), // Delay
+			TimeSpan.FromMinutes(15) // Period
+		);
 	}
 
 	public void Dispose() {
 		// Those are objects that are always being created if constructor doesn't throw exception
 		EventSemaphore.Dispose();
 		FarmingInitializationSemaphore.Dispose();
+		PauseExpirationCheckTimer.Dispose();
 
 		// Those are objects that might be null and the check should be in-place
 		IdleFarmingTimer?.Dispose();
@@ -186,6 +196,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// Those are objects that are always being created if constructor doesn't throw exception
 		EventSemaphore.Dispose();
 		FarmingInitializationSemaphore.Dispose();
+
+		await PauseExpirationCheckTimer.DisposeAsync().ConfigureAwait(false);
 
 		// Those are objects that might be null and the check should be in-place
 		if (IdleFarmingTimer != null) {
@@ -199,6 +211,21 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Utilities.InBackground(StopFarming);
+	}
+
+	private void CheckPauseExpiration(object? state = null) {
+		if (!Paused || PermanentlyPaused || !Bot.BotDatabase.PauseExpiresAt.HasValue) {
+			return;
+		}
+
+		if (DateTime.UtcNow >= Bot.BotDatabase.PauseExpiresAt.Value) {
+			Utilities.InBackground(
+				async () => {
+					Bot.ArchiLogger.LogGenericInfo("Pause duration has expired, automatically resuming farming");
+					await Resume(false).ConfigureAwait(false);
+				}
+			);
+		}
 	}
 
 	internal async Task OnNewGameAdded() {
@@ -270,6 +297,10 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	internal async Task Pause(bool permanent) {
 		if (permanent) {
 			PermanentlyPaused = true;
+			Bot.BotDatabase.PauseExpiresAt = null;
+		} else {
+			// Set pause expiration for non-permanent pauses
+			Bot.BotDatabase.PauseExpiresAt = DateTime.UtcNow.AddHours(24);
 		}
 
 		Paused = true;
@@ -293,6 +324,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Paused = false;
+		Bot.BotDatabase.PauseExpiresAt = null;
 
 		if (NowFarming) {
 			return true;
@@ -313,6 +345,15 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	}
 
 	internal async Task StartFarming() {
+		// Check if pause has expired and auto-resume if needed
+		if (Paused && !PermanentlyPaused && Bot.BotDatabase.PauseExpiresAt.HasValue) {
+			if (DateTime.UtcNow >= Bot.BotDatabase.PauseExpiresAt.Value) {
+				Bot.ArchiLogger.LogGenericInfo("Pause duration has expired, automatically resuming farming");
+				Paused = false;
+				Bot.BotDatabase.PauseExpiresAt = null;
+			}
+		}
+
 		if (NowFarming || Paused || !Bot.IsPlayingPossible) {
 			return;
 		}
