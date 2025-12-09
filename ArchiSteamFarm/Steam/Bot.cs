@@ -523,6 +523,17 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		return Bots.Values.FirstOrDefault(bot => bot.SteamID == steamID);
 	}
 
+	/// <summary>
+	/// Resolves bot names to a set of Bot instances. Supports special selectors:
+	/// @ALL / ASF - All bots
+	/// @FARMING - Bots currently farming cards
+	/// @IDLE - Bots not currently farming cards
+	/// @OFFLINE - Bots not connected to Steam
+	/// @ONLINE - Bots connected to Steam
+	/// @PAUSED - Bots with farming paused
+	/// @ENABLED - Bots with Enabled=true in config
+	/// @STOPPED - Bots not running (stopped)
+	/// </summary>
 	[PublicAPI]
 	public static HashSet<Bot>? GetBots(string args) {
 		ArgumentException.ThrowIfNullOrEmpty(args);
@@ -563,6 +574,21 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				case "@ONLINE":
 					IEnumerable<Bot> onlineBots = Bots.Where(static bot => bot.Value.IsConnectedAndLoggedOn).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
 					result.UnionWith(onlineBots);
+
+					continue;
+				case "@PAUSED":
+					IEnumerable<Bot> pausedBots = Bots.Where(static bot => bot.Value.CardsFarmer.Paused).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(pausedBots);
+
+					continue;
+				case "@ENABLED":
+					IEnumerable<Bot> enabledBots = Bots.Where(static bot => bot.Value.BotConfig.Enabled).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(enabledBots);
+
+					continue;
+				case "@STOPPED":
+					IEnumerable<Bot> stoppedBots = Bots.Where(static bot => !bot.Value.KeepRunning).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(stoppedBots);
 
 					continue;
 			}

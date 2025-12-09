@@ -3277,8 +3277,30 @@ public sealed class Commands {
 		}
 
 		HashSet<Bot> botsRunning = validResults.Where(static result => result.Bot.KeepRunning).Select(static result => result.Bot).ToHashSet();
+		HashSet<Bot> botsPaused = validResults.Where(static result => result.Bot.CardsFarmer.Paused).Select(static result => result.Bot).ToHashSet();
+		HashSet<Bot> botsEnabled = validResults.Where(static result => result.Bot.BotConfig.Enabled).Select(static result => result.Bot).ToHashSet();
+		HashSet<Bot> botsStopped = validResults.Where(static result => !result.Bot.KeepRunning).Select(static result => result.Bot).ToHashSet();
 
 		string extraResponse = Strings.FormatBotStatusOverview(botsRunning.Count, validResults.Count, botsRunning.Sum(static bot => bot.CardsFarmer.GamesToFarmReadOnly.Count), botsRunning.Sum(static bot => bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining)));
+
+		// Add state breakdown summary
+		List<string> stateBreakdown = [];
+
+		if (botsPaused.Count > 0) {
+			stateBreakdown.Add($"Paused: {botsPaused.Count}");
+		}
+
+		if (botsStopped.Count > 0) {
+			stateBreakdown.Add($"Stopped: {botsStopped.Count}");
+		}
+
+		if (botsEnabled.Count > 0) {
+			stateBreakdown.Add($"Enabled: {botsEnabled.Count}");
+		}
+
+		if (stateBreakdown.Count > 0) {
+			extraResponse += $" | {string.Join(", ", stateBreakdown)}";
+		}
 
 		return string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Union(extraResponse.ToEnumerable()));
 	}
