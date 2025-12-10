@@ -294,9 +294,14 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
-	public async Task<(bool Success, string Message)> Pause(bool permanent, ushort resumeInSeconds = 0) {
+	public async Task<(bool Success, string Message)> Pause(bool permanent, ushort resumeInSeconds = 0, bool graceful = false) {
 		if (Bot.CardsFarmer.Paused) {
 			return (false, Strings.BotAutomaticIdlingPausedAlready);
+		}
+
+		if (graceful) {
+			// Wait for ongoing operations to complete before pausing
+			await WaitForPendingOperations().ConfigureAwait(false);
 		}
 
 		await Bot.CardsFarmer.Pause(permanent).ConfigureAwait(false);
@@ -538,14 +543,40 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
-	public async Task<(bool Success, string Message)> Stop() {
+	public async Task<(bool Success, string Message)> Stop(bool graceful = false) {
 		if (!Bot.KeepRunning) {
 			return (false, Strings.BotAlreadyStopped);
+		}
+
+		if (graceful) {
+			// Wait for ongoing operations to complete before stopping
+			await WaitForPendingOperations().ConfigureAwait(false);
 		}
 
 		await Bot.Stop().ConfigureAwait(false);
 
 		return (true, Strings.Done);
+	}
+
+	private async Task WaitForPendingOperations() {
+		const byte MaxGracefulWaitSeconds = 30;
+		const byte CheckIntervalMilliseconds = 500;
+
+		byte elapsed = 0;
+
+		// Wait for active farming or trading operations
+		while (elapsed < MaxGracefulWaitSeconds) {
+			bool hasPendingOperations = Bot.CardsFarmer.NowFarming ||
+			                           TradingSemaphore.CurrentCount == 0 ||
+			                           ProcessingGiftsScheduled;
+
+			if (!hasPendingOperations) {
+				break;
+			}
+
+			await Task.Delay(CheckIntervalMilliseconds).ConfigureAwait(false);
+			elapsed++;
+		}
 	}
 
 	[PublicAPI]

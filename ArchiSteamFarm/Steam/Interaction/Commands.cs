@@ -171,6 +171,8 @@ public sealed class Commands {
 						return ResponseStatus(access).Response;
 					case "STOP":
 						return await ResponseStop(access).ConfigureAwait(false);
+					case "STOP!":
+						return await ResponseStop(access, graceful: true).ConfigureAwait(false);
 					case "TB":
 						return ResponseTradingBlacklist(access);
 					case "UNPACK":
@@ -280,8 +282,12 @@ public sealed class Commands {
 						return (await ResponseOwns(access, args[1]).ConfigureAwait(false)).Response;
 					case "PAUSE":
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID: steamID).ConfigureAwait(false);
+					case "PAUSE!":
+						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID: steamID, graceful: true).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), false, steamID: steamID).ConfigureAwait(false);
+					case "PAUSE~!":
+						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), false, steamID: steamID, graceful: true).ConfigureAwait(false);
 					case "PAUSE&" when args.Length > 2:
 						return await ResponsePause(access, args[1], true, Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 					case "PAUSE&":
@@ -322,6 +328,8 @@ public sealed class Commands {
 						return await ResponseStatus(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "STOP":
 						return await ResponseStop(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "STOP!":
+						return await ResponseStop(access, Utilities.GetArgsAsText(args, 1, ","), steamID, graceful: true).ConfigureAwait(false);
 					case "TB":
 						return await ResponseTradingBlacklist(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "TBADD" when args.Length > 2:
@@ -2247,7 +2255,7 @@ public sealed class Commands {
 		return string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Concat(extraResponses));
 	}
 
-	private async Task<string?> ResponsePause(EAccess access, bool permanent, string? resumeInSecondsText = null) {
+	private async Task<string?> ResponsePause(EAccess access, bool permanent, string? resumeInSecondsText = null, bool graceful = false) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
@@ -2266,12 +2274,12 @@ public sealed class Commands {
 			return Strings.FormatErrorIsInvalid(nameof(resumeInSecondsText));
 		}
 
-		(bool success, string message) = await Bot.Actions.Pause(permanent, resumeInSeconds).ConfigureAwait(false);
+		(bool success, string message) = await Bot.Actions.Pause(permanent, resumeInSeconds, graceful).ConfigureAwait(false);
 
 		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
 	}
 
-	private static async Task<string?> ResponsePause(EAccess access, string botNames, bool permanent, string? resumeInSecondsText = null, ulong steamID = 0) {
+	private static async Task<string?> ResponsePause(EAccess access, string botNames, bool permanent, string? resumeInSecondsText = null, ulong steamID = 0, bool graceful = false) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
@@ -2284,7 +2292,7 @@ public sealed class Commands {
 			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
 		}
 
-		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePause(GetProxyAccess(bot, access, steamID), permanent, resumeInSecondsText))).ConfigureAwait(false);
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePause(GetProxyAccess(bot, access, steamID), permanent, resumeInSecondsText, graceful))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
@@ -3283,7 +3291,7 @@ public sealed class Commands {
 		return string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Union(extraResponse.ToEnumerable()));
 	}
 
-	private async Task<string?> ResponseStop(EAccess access) {
+	private async Task<string?> ResponseStop(EAccess access, bool graceful = false) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
@@ -3292,12 +3300,12 @@ public sealed class Commands {
 			return null;
 		}
 
-		(bool success, string message) = await Bot.Actions.Stop().ConfigureAwait(false);
+		(bool success, string message) = await Bot.Actions.Stop(graceful).ConfigureAwait(false);
 
 		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
 	}
 
-	private static async Task<string?> ResponseStop(EAccess access, string botNames, ulong steamID = 0) {
+	private static async Task<string?> ResponseStop(EAccess access, string botNames, ulong steamID = 0, bool graceful = false) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
@@ -3310,7 +3318,7 @@ public sealed class Commands {
 			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
 		}
 
-		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseStop(GetProxyAccess(bot, access, steamID)))).ConfigureAwait(false);
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseStop(GetProxyAccess(bot, access, steamID), graceful))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
