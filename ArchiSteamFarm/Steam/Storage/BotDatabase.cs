@@ -194,6 +194,25 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	internal ObservableConcurrentDictionary<string, RetryableKey> GamesToRetryInBackground { get; private init; } = new(StringComparer.OrdinalIgnoreCase);
+
+	internal sealed class RetryableKey {
+		[JsonInclude]
+		[JsonRequired]
+		public required string Name { get; init; }
+
+		[JsonInclude]
+		[JsonRequired]
+		public byte RetryCount { get; set; }
+
+		[JsonInclude]
+		[JsonRequired]
+		public DateTime NextRetryTime { get; set; }
+	}
+
 	private BotDatabase(string filePath) : this() {
 		ArgumentException.ThrowIfNullOrEmpty(filePath);
 
@@ -207,6 +226,7 @@ public sealed class BotDatabase : GenericDatabase {
 		FarmingPriorityQueueAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyIgnoredAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyPrioritizedAppIDs.OnModified += OnObjectModified;
+		GamesToRetryInBackground.OnModified += OnObjectModified;
 		MatchActivelyBlacklistAppIDs.OnModified += OnObjectModified;
 		TradingBlacklistSteamIDs.OnModified += OnObjectModified;
 	}
@@ -265,6 +285,9 @@ public sealed class BotDatabase : GenericDatabase {
 	public bool ShouldSerializeGamesToRedeemInBackground() => HasGamesToRedeemInBackground;
 
 	[UsedImplicitly]
+	public bool ShouldSerializeGamesToRetryInBackground() => !GamesToRetryInBackground.IsEmpty;
+
+	[UsedImplicitly]
 	public bool ShouldSerializeMatchActivelyBlacklistAppIDs() => MatchActivelyBlacklistAppIDs.Count > 0;
 
 	[UsedImplicitly]
@@ -290,6 +313,7 @@ public sealed class BotDatabase : GenericDatabase {
 			FarmingPriorityQueueAppIDs.OnModified -= OnObjectModified;
 			FarmingRiskyIgnoredAppIDs.OnModified -= OnObjectModified;
 			FarmingRiskyPrioritizedAppIDs.OnModified -= OnObjectModified;
+			GamesToRetryInBackground.OnModified -= OnObjectModified;
 			MatchActivelyBlacklistAppIDs.OnModified -= OnObjectModified;
 			TradingBlacklistSteamIDs.OnModified -= OnObjectModified;
 
@@ -397,6 +421,40 @@ public sealed class BotDatabase : GenericDatabase {
 		foreach (uint appID in FarmingRiskyIgnoredAppIDs.Where(entry => entry.Value < now).Select(static entry => entry.Key)) {
 			FarmingRiskyIgnoredAppIDs.Remove(appID);
 		}
+
+		// Move retryable keys that are ready to retry back to main queue
+		foreach ((string key, RetryableKey retryData) in GamesToRetryInBackground.Where(entry => entry.Value.NextRetryTime <= now)) {
+			lock (GamesToRedeemInBackground) {
+				if (!GamesToRedeemInBackground.ContainsKey(key)) {
+					GamesToRedeemInBackground[key] = retryData.Name;
+				}
+			}
+
+			GamesToRetryInBackground.Remove(key);
+		}
+	}
+
+	internal void AddGameToRetryQueue(string key, string name, byte currentRetryCount = 0) {
+		ArgumentException.ThrowIfNullOrEmpty(key);
+		ArgumentException.ThrowIfNullOrEmpty(name);
+
+		const byte maxRetries = 3;
+
+		if (currentRetryCount >= maxRetries) {
+			// Max retries reached, don't add to retry queue
+			return;
+		}
+
+		// Exponential backoff: 1 hour, 3 hours, 9 hours
+		TimeSpan retryDelay = TimeSpan.FromHours(Math.Pow(3, currentRetryCount));
+
+		GamesToRetryInBackground[key] = new RetryableKey {
+			Name = name,
+			RetryCount = (byte) (currentRetryCount + 1),
+			NextRetryTime = DateTime.UtcNow.Add(retryDelay)
+		};
+
+		Utilities.InBackground(Save);
 	}
 
 	internal void RemoveGameToRedeemInBackground(string key) {

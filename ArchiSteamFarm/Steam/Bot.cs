@@ -668,6 +668,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			EFileType.KeysToRedeem => $"{botPath}{SharedInfo.KeysExtension}",
 			EFileType.KeysToRedeemUnused => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysUnusedExtension}",
 			EFileType.KeysToRedeemUsed => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysUsedExtension}",
+			EFileType.KeysToRedeemRetried => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysRetriedExtension}",
 			EFileType.MobileAuthenticator => $"{botPath}{SharedInfo.MobileAuthenticatorExtension}",
 			_ => throw new InvalidOperationException(nameof(fileType))
 		};
@@ -1081,6 +1082,24 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		if (File.Exists(usedKeysFilePath)) {
 			try {
 				File.Delete(usedKeysFilePath);
+			} catch (Exception e) {
+				ArchiLogger.LogGenericException(e);
+
+				return false;
+			}
+		}
+
+		string retriedKeysFilePath = GetFilePath(EFileType.KeysToRedeemRetried);
+
+		if (string.IsNullOrEmpty(retriedKeysFilePath)) {
+			ASF.ArchiLogger.LogNullError(retriedKeysFilePath);
+
+			return false;
+		}
+
+		if (File.Exists(retriedKeysFilePath)) {
+			try {
+				File.Delete(retriedKeysFilePath);
 			} catch (Exception e) {
 				ArchiLogger.LogGenericException(e);
 
@@ -3670,6 +3689,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				bool rateLimited = false;
 				bool redeemed = false;
+				bool shouldRetry = false;
 
 				switch (purchaseResultDetail) {
 					case EPurchaseResultDetail.AccountLocked:
@@ -3678,7 +3698,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					case EPurchaseResultDetail.DoesNotOwnRequiredApp:
 					case EPurchaseResultDetail.NoWallet:
 					case EPurchaseResultDetail.RestrictedCountry:
+						break;
 					case EPurchaseResultDetail.Timeout:
+						// Network/temporary errors should be retried
+						shouldRetry = true;
+
 						break;
 					case EPurchaseResultDetail.BadActivationCode:
 					case EPurchaseResultDetail.DuplicateActivationCode:
@@ -3701,6 +3725,16 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				}
 
 				BotDatabase.RemoveGameToRedeemInBackground(key);
+
+				if (shouldRetry) {
+					// Check if this key is in retry queue to get its retry count
+					byte retryCount = BotDatabase.GamesToRetryInBackground.TryGetValue(key, out BotDatabase.RetryableKey? existingRetry) ? existingRetry.RetryCount : (byte) 0;
+
+					BotDatabase.AddGameToRetryQueue(key, name ?? key, retryCount);
+
+					// Don't write to unused file for retryable errors
+					continue;
+				}
 
 				// If user omitted the name or intentionally provided the same name as key, replace it with the Steam result
 				name ??= key;
@@ -4176,6 +4210,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		KeysToRedeem,
 		KeysToRedeemUnused,
 		KeysToRedeemUsed,
+		KeysToRedeemRetried,
 		MobileAuthenticator
 	}
 }

@@ -58,6 +58,7 @@ public static class SharedInfo {
 	internal const string KeysExtension = ".keys";
 	internal const string KeysUnusedExtension = ".unused";
 	internal const string KeysUsedExtension = ".used";
+	internal const string KeysRetriedExtension = ".retried";
 	internal const string LicenseName = "Apache 2.0";
 	internal const string LicenseURL = "https://www.apache.org/licenses/LICENSE-2.0";
 	internal const string LogFile = "log.txt";
