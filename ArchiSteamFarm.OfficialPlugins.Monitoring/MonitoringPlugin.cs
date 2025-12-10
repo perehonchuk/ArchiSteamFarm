@@ -47,7 +47,7 @@ namespace ArchiSteamFarm.OfficialPlugins.Monitoring;
 
 [Export(typeof(IPlugin))]
 [SuppressMessage("ReSharper", "MemberCanBeFileLocal")]
-internal sealed class MonitoringPlugin : OfficialPlugin, IBot, IBotTradeOfferResults, IDisposable, IOfficialGitHubPluginUpdates, IWebInterface, IWebServiceProvider {
+internal sealed class MonitoringPlugin : OfficialPlugin, IBot, IBotTradeOfferResults, IDisposable, IOfficialGitHubPluginUpdates, IPluginLoadPriority, IWebInterface, IWebServiceProvider {
 	private const string MeterName = SharedInfo.AssemblyName;
 	private const string MetricNamePrefix = "asf";
 	private const string UnknownLabelValueFallback = "unknown";
@@ -76,6 +76,11 @@ internal sealed class MonitoringPlugin : OfficialPlugin, IBot, IBotTradeOfferRes
 
 	[JsonInclude]
 	public override Version Version => typeof(MonitoringPlugin).Assembly.GetName().Version ?? throw new InvalidOperationException(nameof(Version));
+
+	// Monitoring plugin should load early as it provides infrastructure for other plugins
+	public IPluginLoadPriority.ELoadPhase LoadPhase => IPluginLoadPriority.ELoadPhase.Early;
+
+	public byte Priority => 50; // Higher priority (lower value) to load before most other plugins
 
 	private readonly ConcurrentDictionary<Bot, TradeStatistics> TradeStatistics = new();
 

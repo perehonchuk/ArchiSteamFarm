@@ -42,7 +42,7 @@ using SteamKit2;
 namespace ArchiSteamFarm.OfficialPlugins.ItemsMatcher;
 
 [Export(typeof(IPlugin))]
-internal sealed class ItemsMatcherPlugin : OfficialPlugin, IBot, IBotCommand2, IBotIdentity, IBotModules, IBotTradeOfferResults, IBotUserNotifications {
+internal sealed class ItemsMatcherPlugin : OfficialPlugin, IBot, IBotCommand2, IBotIdentity, IBotModules, IBotTradeOfferResults, IBotUserNotifications, IPluginLoadPriority {
 	internal static readonly ConcurrentDictionary<Bot, RemoteCommunication> RemoteCommunications = new();
 
 	[JsonInclude]
@@ -50,6 +50,11 @@ internal sealed class ItemsMatcherPlugin : OfficialPlugin, IBot, IBotCommand2, I
 
 	[JsonInclude]
 	public override Version Version => typeof(ItemsMatcherPlugin).Assembly.GetName().Version ?? throw new InvalidOperationException(nameof(Version));
+
+	// ItemsMatcher depends on trading infrastructure, so load in Late phase
+	public IPluginLoadPriority.ELoadPhase LoadPhase => IPluginLoadPriority.ELoadPhase.Late;
+
+	public byte Priority => 100; // Default priority within Late phase
 
 	public async Task<string?> OnBotCommand(Bot bot, EAccess access, string message, string[] args, ulong steamID = 0) {
 		ArgumentNullException.ThrowIfNull(bot);

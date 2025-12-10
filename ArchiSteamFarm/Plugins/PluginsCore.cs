@@ -237,24 +237,74 @@ public static class PluginsCore {
 
 		HashSet<IPlugin> invalidPlugins = [];
 
-		foreach (IPlugin plugin in activePlugins) {
-			try {
-				ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoading(plugin.Name, plugin.Version));
-
-				if (!Program.IgnoreUnsupportedEnvironment && plugin is OfficialPlugin officialPlugin && !officialPlugin.HasSameVersion()) {
-					ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnsupportedOfficialPlugins(plugin.Name, plugin.Version, SharedInfo.Version));
-
-					await Task.Delay(SharedInfo.InformationDelay).ConfigureAwait(false);
-
-					return false;
+		// Group plugins by load phase and priority
+		var pluginsByPhase = activePlugins
+			.GroupBy(plugin => {
+				if (plugin is IPluginLoadPriority priorityPlugin) {
+					return priorityPlugin.LoadPhase;
 				}
 
-				await plugin.OnLoaded().ConfigureAwait(false);
+				return IPluginLoadPriority.ELoadPhase.Normal;
+			})
+			.OrderBy(group => group.Key)
+			.ToList();
 
-				ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoaded(plugin.Name));
-			} catch (Exception e) {
-				ASF.ArchiLogger.LogGenericException(e);
-				invalidPlugins.Add(plugin);
+		ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginPhasedLoadingStarting(activePlugins.Count));
+
+		foreach (var phaseGroup in pluginsByPhase) {
+			var pluginsInPhase = phaseGroup
+				.OrderBy(plugin => {
+					if (plugin is IPluginLoadPriority priorityPlugin) {
+						return priorityPlugin.Priority;
+					}
+
+					return (byte) 100; // Default priority
+				})
+				.ThenBy(plugin => plugin.Name)
+				.ToList();
+
+			string phaseName = phaseGroup.Key switch {
+				IPluginLoadPriority.ELoadPhase.Early => "Early",
+				IPluginLoadPriority.ELoadPhase.Late => "Late",
+				_ => "Normal"
+			};
+
+			ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoadPhase(phaseName, pluginsInPhase.Count));
+
+			int loadedInPhase = 0;
+
+			foreach (IPlugin plugin in pluginsInPhase) {
+				try {
+					byte priority = plugin is IPluginLoadPriority priorityPlugin ? priorityPlugin.Priority : (byte) 100;
+					ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoadingWithPriority(plugin.Name, plugin.Version, phaseName, priority));
+
+					if (!Program.IgnoreUnsupportedEnvironment && plugin is OfficialPlugin officialPlugin && !officialPlugin.HasSameVersion()) {
+						ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnsupportedOfficialPlugins(plugin.Name, plugin.Version, SharedInfo.Version));
+
+						await Task.Delay(SharedInfo.InformationDelay).ConfigureAwait(false);
+
+						return false;
+					}
+
+					await plugin.OnLoaded().ConfigureAwait(false);
+
+					ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoaded(plugin.Name));
+					loadedInPhase++;
+				} catch (Exception e) {
+					ASF.ArchiLogger.LogGenericException(e);
+					invalidPlugins.Add(plugin);
+				}
+			}
+
+			// Notify all phase-aware plugins that this phase has completed
+			var phaseAwarePlugins = activePlugins.Except(invalidPlugins).OfType<IPluginLoadPhaseAware>().ToList();
+
+			foreach (var phaseAwarePlugin in phaseAwarePlugins) {
+				try {
+					await phaseAwarePlugin.OnLoadPhaseCompleted(phaseGroup.Key, loadedInPhase).ConfigureAwait(false);
+				} catch (Exception e) {
+					ASF.ArchiLogger.LogGenericException(e);
+				}
 			}
 		}
 

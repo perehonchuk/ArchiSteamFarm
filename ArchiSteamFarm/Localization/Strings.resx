@@ -611,6 +611,18 @@ Process uptime: {1}</value>
 		<value>Loading {0} V{1}...</value>
 		<comment>{0} will be replaced by the name of the custom ASF plugin, {1} will be replaced by its version</comment>
 	</data>
+	<data name="PluginPhasedLoadingStarting" xml:space="preserve">
+		<value>Initiating phased plugin loading for {0} plugin(s)...</value>
+		<comment>{0} will be replaced by total number of plugins</comment>
+	</data>
+	<data name="PluginLoadPhase" xml:space="preserve">
+		<value>Loading phase: {0} ({1} plugin(s))</value>
+		<comment>{0} will be replaced by phase name (Early/Normal/Late), {1} will be replaced by number of plugins in phase</comment>
+	</data>
+	<data name="PluginLoadingWithPriority" xml:space="preserve">
+		<value>Loading {0} V{1} [Phase: {2}, Priority: {3}]...</value>
+		<comment>{0} will be replaced by the name of the custom ASF plugin, {1} will be replaced by its version, {2} will be replaced by load phase, {3} will be replaced by priority value</comment>
+	</data>
 	<data name="NothingFound" xml:space="preserve">
 		<value>Nothing found!</value>
 	</data>
