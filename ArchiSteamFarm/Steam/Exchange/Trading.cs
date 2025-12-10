@@ -43,9 +43,11 @@ namespace ArchiSteamFarm.Steam.Exchange;
 public sealed class Trading : IDisposable {
 	internal const byte MaxItemsPerTrade = byte.MaxValue; // This is decided upon various factors, mainly stability of Steam servers when dealing with huge trade offers
 	internal const byte MaxTradesPerAccount = 5; // This is limit introduced by Valve
+	internal const uint MaxTradeOfferAgeHours = 72; // Maximum age in hours before a trade offer is automatically rejected to prevent stale offers from accumulating
 
 	private readonly Bot Bot;
 	private readonly ConcurrentHashSet<ulong> HandledTradeOfferIDs = [];
+	private readonly ConcurrentDictionary<ulong, DateTime> TradeOfferFirstSeenTimes = new();
 	private readonly SemaphoreSlim TradesSemaphore = new(1, 1);
 
 	private bool ParsingScheduled;
@@ -213,7 +215,10 @@ public sealed class Trading : IDisposable {
 		return true;
 	}
 
-	internal void OnDisconnected() => HandledTradeOfferIDs.Clear();
+	internal void OnDisconnected() {
+		HandledTradeOfferIDs.Clear();
+		TradeOfferFirstSeenTimes.Clear();
+	}
 
 	internal async Task OnNewTrade() {
 		if (Bot.BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.DisableIncomingTradesParsing)) {
@@ -286,6 +291,17 @@ public sealed class Trading : IDisposable {
 
 			if (HandledTradeOfferIDs.Count > 0) {
 				HandledTradeOfferIDs.IntersectWith(tradeOffers.Select(static tradeOffer => tradeOffer.TradeOfferID));
+			}
+
+			// Clean up tracking for offers that are no longer active
+			if (TradeOfferFirstSeenTimes.Count > 0) {
+				HashSet<ulong> activeOfferIDs = tradeOffers.Select(static tradeOffer => tradeOffer.TradeOfferID).ToHashSet();
+
+				foreach (ulong trackedOfferID in TradeOfferFirstSeenTimes.Keys.ToList()) {
+					if (!activeOfferIDs.Contains(trackedOfferID)) {
+						TradeOfferFirstSeenTimes.TryRemove(trackedOfferID, out _);
+					}
+				}
 			}
 
 			HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets = [];
@@ -420,6 +436,20 @@ public sealed class Trading : IDisposable {
 
 		if (Bot.Bots == null) {
 			throw new InvalidOperationException(nameof(Bot.Bots));
+		}
+
+		// Track when we first saw this trade offer for age-based filtering
+		DateTime firstSeenTime = TradeOfferFirstSeenTimes.GetOrAdd(tradeOffer.TradeOfferID, _ => DateTime.UtcNow);
+
+		// Check trade offer age - reject offers that have been pending too long
+		// This helps prevent accumulation of stale trade offers and improves trade queue hygiene
+		DateTime offerCreationTime = tradeOffer.TimeCreated > 0 ? DateTimeOffset.FromUnixTimeSeconds(tradeOffer.TimeCreated).UtcDateTime : firstSeenTime;
+		TimeSpan offerAge = DateTime.UtcNow - offerCreationTime;
+
+		if (offerAge.TotalHours > MaxTradeOfferAgeHours) {
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Rejected, $"Trade offer age {offerAge.TotalHours:F1} hours exceeds maximum {MaxTradeOfferAgeHours} hours"));
+
+			return ParseTradeResult.EResult.Rejected;
 		}
 
 		if (tradeOffer.OtherSteamID64 != 0) {

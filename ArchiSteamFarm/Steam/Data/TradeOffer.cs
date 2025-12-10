@@ -55,6 +55,12 @@ public sealed class TradeOffer {
 	[PublicAPI]
 	public ulong TradeOfferID { get; private set; }
 
+	[JsonInclude]
+	[JsonNumberHandling(JsonNumberHandling.AllowReadingFromString | JsonNumberHandling.WriteAsString)]
+	[JsonPropertyName("time_created")]
+	[PublicAPI]
+	public uint TimeCreated { get; private set; }
+
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonPropertyName("items_to_give")]
