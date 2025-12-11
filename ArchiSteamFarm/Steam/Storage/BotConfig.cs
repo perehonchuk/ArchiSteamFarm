@@ -732,7 +732,9 @@ public sealed class BotConfig {
 		RedeemDateTimesAscending,
 		RedeemDateTimesDescending,
 		MarketableAscending,
-		MarketableDescending
+		MarketableDescending,
+		PlaytimeAscending,
+		PlaytimeDescending
 	}
 
 	[Flags]

@@ -236,6 +236,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			// We should restart the farming if the order or efficiency of the farming could be affected by the newly-activated product
 			// The order is affected when user uses farming order that isn't independent of the game data (it could alter the order in deterministic way if the game was considered in current queue)
 			// The efficiency is affected only in complex algorithm (entirely), as it depends on hours order that is not independent (as specified above)
+			// PlaytimeAscending and PlaytimeDescending are data-dependent as they calculate ratios based on HoursPlayed and CardsRemaining
 			if (!ShouldSkipNewGamesIfPossible && ((Bot.BotConfig.HoursUntilCardDrops > 0) || ((Bot.BotConfig.FarmingOrders.Count > 0) && Bot.BotConfig.FarmingOrders.Any(static farmingOrder => farmingOrder is not BotConfig.EFarmingOrder.Unordered and not BotConfig.EFarmingOrder.Random)))) {
 				await StopFarming().ConfigureAwait(false);
 				await StartFarming().ConfigureAwait(false);
@@ -1536,6 +1537,14 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 						_ => throw new InvalidOperationException(nameof(farmingOrder))
 					};
+
+					break;
+				case BotConfig.EFarmingOrder.PlaytimeAscending:
+					orderedGamesToFarm = orderedGamesToFarm.ThenBy(static game => game.HoursPlayed / Math.Max(game.CardsRemaining, 1));
+
+					break;
+				case BotConfig.EFarmingOrder.PlaytimeDescending:
+					orderedGamesToFarm = orderedGamesToFarm.ThenByDescending(static game => game.HoursPlayed / Math.Max(game.CardsRemaining, 1));
 
 					break;
 				default:
