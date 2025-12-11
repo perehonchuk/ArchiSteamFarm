@@ -43,10 +43,12 @@ namespace ArchiSteamFarm.Steam.Exchange;
 public sealed class Trading : IDisposable {
 	internal const byte MaxItemsPerTrade = byte.MaxValue; // This is decided upon various factors, mainly stability of Steam servers when dealing with huge trade offers
 	internal const byte MaxTradesPerAccount = 5; // This is limit introduced by Valve
+	internal const ushort TradeProcessingDelayMilliseconds = 500; // Delay between processing trade offers from different users to avoid overwhelming Steam servers
 
 	private readonly Bot Bot;
 	private readonly ConcurrentHashSet<ulong> HandledTradeOfferIDs = [];
 	private readonly SemaphoreSlim TradesSemaphore = new(1, 1);
+	private readonly SemaphoreSlim TradeProcessingSemaphore = new(1, 1);
 
 	private bool ParsingScheduled;
 
@@ -56,7 +58,10 @@ public sealed class Trading : IDisposable {
 		Bot = bot;
 	}
 
-	public void Dispose() => TradesSemaphore.Dispose();
+	public void Dispose() {
+		TradesSemaphore.Dispose();
+		TradeProcessingSemaphore.Dispose();
+	}
 
 	[PublicAPI]
 	public async Task<bool> AcknowledgeTradeRestrictions() {
@@ -290,9 +295,19 @@ public sealed class Trading : IDisposable {
 
 			HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets = [];
 
-			IEnumerable<Task<ParseTradeResult>> tasks = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID)).Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
+			// Group trade offers by sender for sequential processing per user, but allow concurrent processing across different users
+			IEnumerable<IGrouping<ulong, TradeOffer>> tradeOffersByUser = tradeOffers
+				.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID))
+				.GroupBy(static tradeOffer => tradeOffer.OtherSteamID64);
 
-			IList<ParseTradeResult> tradeResults = await Utilities.InParallel(tasks).ConfigureAwait(false);
+			List<Task<List<ParseTradeResult>>> userGroupTasks = [];
+
+			foreach (IGrouping<ulong, TradeOffer> userGroup in tradeOffersByUser) {
+				userGroupTasks.Add(ProcessUserTradeOffers(userGroup, handledSets));
+			}
+
+			List<ParseTradeResult>[] userResults = await Task.WhenAll(userGroupTasks).ConfigureAwait(false);
+			IList<ParseTradeResult> tradeResults = userResults.SelectMany(static results => results).ToList();
 
 			if (!Bot.BotDatabase.TradeRestrictionsAcknowledged && tradeResults.Any(static result => ((result.Result == ParseTradeResult.EResult.Accepted) && (result.ItemsToGive?.Any(static item => item.AppID != Asset.SteamAppID) == true)) || (result.ItemsToReceive?.Any(static item => item.AppID != Asset.SteamAppID) == true))) {
 				// We should normally fail the process in case of a failure here, but since the popup could be marked already in the past, we'll allow it in hope it wasn't needed after all
@@ -335,6 +350,32 @@ public sealed class Trading : IDisposable {
 
 		// The remaining trade offers we'll handle at later time
 		return lootableTypesReceived;
+	}
+
+	private async Task<List<ParseTradeResult>> ProcessUserTradeOffers(IEnumerable<TradeOffer> userOffers, ISet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets) {
+		ArgumentNullException.ThrowIfNull(userOffers);
+		ArgumentNullException.ThrowIfNull(handledSets);
+
+		List<ParseTradeResult> results = [];
+
+		// Acquire semaphore to ensure controlled concurrent processing
+		await TradeProcessingSemaphore.WaitAsync().ConfigureAwait(false);
+
+		try {
+			foreach (TradeOffer tradeOffer in userOffers) {
+				ParseTradeResult result = await ParseTrade(tradeOffer, handledSets).ConfigureAwait(false);
+				results.Add(result);
+			}
+
+			// Add delay after processing all offers from this user before allowing next user's offers to be processed
+			if (results.Count > 0) {
+				await Task.Delay(TradeProcessingDelayMilliseconds).ConfigureAwait(false);
+			}
+		} finally {
+			TradeProcessingSemaphore.Release();
+		}
+
+		return results;
 	}
 
 	private async Task<ParseTradeResult> ParseTrade(TradeOffer tradeOffer, ISet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets) {
