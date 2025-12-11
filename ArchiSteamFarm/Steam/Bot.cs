@@ -84,6 +84,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	internal static EOSType OSType { get; private set; } = EOSType.Unknown;
 
 	private static readonly SemaphoreSlim BotsSemaphore = new(1, 1);
+	private static readonly ConcurrentDictionary<string, DateTime> BotStartupTimes = new();
+	private static int BotStartupSequence = 0;
 
 	[JsonIgnore]
 	[PublicAPI]
@@ -165,6 +167,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	[JsonIgnore]
 	[PublicAPI]
 	public Trading Trading { get; }
+
+	[JsonInclude]
+	[PublicAPI]
+	public EStartupPhase StartupPhase { get; private set; } = EStartupPhase.Initializing;
 
 	internal bool CanReceiveSteamCards => !IsAccountLimited && !IsAccountLocked;
 	internal bool HasLoginCodeReady => !string.IsNullOrEmpty(TwoFactorCode) || !string.IsNullOrEmpty(AuthCode);
@@ -1935,6 +1941,21 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 			ArchiLogger.LogGenericInfo(Strings.Starting);
 
+			// Warmup phase - staged startup with delay
+			StartupPhase = EStartupPhase.WarmingUp;
+			DateTime startupTime = BotStartupTimes.GetOrAdd(BotName, DateTime.UtcNow);
+			TimeSpan warmupDelay = TimeSpan.FromSeconds(5);
+
+			if (ASF.GlobalConfig?.BotStartDelay > 0) {
+				int sequence = Interlocked.Increment(ref BotStartupSequence) - 1;
+				warmupDelay = TimeSpan.FromSeconds(ASF.GlobalConfig.BotStartDelay * sequence);
+
+				if (warmupDelay > TimeSpan.Zero) {
+					ArchiLogger.LogGenericInfo($"Warmup phase: delaying startup by {warmupDelay.TotalSeconds} seconds (sequence #{sequence})");
+					await Task.Delay(warmupDelay).ConfigureAwait(false);
+				}
+			}
+
 			// Support and convert 2FA files
 			if (!HasMobileAuthenticator) {
 				string mobileAuthenticatorFilePath = GetFilePath(EFileType.MobileAuthenticator);
@@ -1969,6 +1990,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 			CancellationToken token = CallbacksAborted.Token;
 
+			StartupPhase = EStartupPhase.Connecting;
 			Utilities.InBackground(() => HandleCallbacks(token), true);
 			Utilities.InBackground(Connect);
 		} finally {
@@ -1989,6 +2011,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 
 			KeepRunning = false;
+			StartupPhase = EStartupPhase.Initializing;
 
 			ArchiLogger.LogGenericInfo(Strings.BotStopping);
 
@@ -3351,6 +3374,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		ArchiLogger.LogGenericInfo(Strings.FormatBotLoggedOn($"{SteamID}{(!string.IsNullOrEmpty(callback.VanityURL) ? $"/{callback.VanityURL}" : "")}"));
 
+		// Transition to Running phase after successful login
+		StartupPhase = EStartupPhase.Running;
+
 		// Old status for these doesn't matter, we'll update them if needed
 		LoginFailures = 0;
 		LibraryLocked = PlayingBlocked = false;
@@ -4177,5 +4203,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		KeysToRedeemUnused,
 		KeysToRedeemUsed,
 		MobileAuthenticator
+	}
+
+	[PublicAPI]
+	public enum EStartupPhase : byte {
+		Initializing,
+		WarmingUp,
+		Connecting,
+		Running
 	}
 }

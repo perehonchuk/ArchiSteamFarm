@@ -94,6 +94,9 @@ public sealed class GlobalConfig {
 	public const ArchiCryptoHelper.EHashingMethod DefaultIPCPasswordFormat = ArchiCryptoHelper.EHashingMethod.PlainText;
 
 	[PublicAPI]
+	public const byte DefaultBotStartDelay = 0;
+
+	[PublicAPI]
 	public const byte DefaultLoginLimiterDelay = 10;
 
 	[PublicAPI]
@@ -273,6 +276,10 @@ public sealed class GlobalConfig {
 
 	[JsonInclude]
 	[Range(byte.MinValue, byte.MaxValue)]
+	public byte BotStartDelay { get; init; } = DefaultBotStartDelay;
+
+	[JsonInclude]
+	[Range(byte.MinValue, byte.MaxValue)]
 	public byte LoginLimiterDelay { get; init; } = DefaultLoginLimiterDelay;
 
 	[JsonInclude]
@@ -422,6 +429,9 @@ public sealed class GlobalConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeLicenseID() => Saving && IsLicenseIDSet && (LicenseID != DefaultLicenseID) && (LicenseID != Guid.Empty);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeBotStartDelay() => !Saving || (BotStartDelay != DefaultBotStartDelay);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeLoginLimiterDelay() => !Saving || (LoginLimiterDelay != DefaultLoginLimiterDelay);
