@@ -295,6 +295,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private string? AuthCode;
 	private CancellationTokenSource? CallbacksAborted;
 	private Timer? ConnectionFailureTimer;
+	private byte ConsecutiveConnectionFailures;
+	private DateTime? LastConnectionAttempt;
+	private Timer? ConnectionRetryTimer;
 	private bool FirstTradeSent;
 	private Timer? GamesRedeemerInBackgroundTimer;
 	private string? IPCountryCode;
@@ -418,6 +421,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		CallbacksAborted?.Cancel();
 		CallbacksAborted?.Dispose();
 		ConnectionFailureTimer?.Dispose();
+		ConnectionRetryTimer?.Dispose();
 		GamesRedeemerInBackgroundTimer?.Dispose();
 		PlayingWasBlockedTimer?.Dispose();
 		RefreshTokensTimer?.Dispose();
@@ -441,6 +445,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		if (ConnectionFailureTimer != null) {
 			await ConnectionFailureTimer.DisposeAsync().ConfigureAwait(false);
+		}
+
+		if (ConnectionRetryTimer != null) {
+			await ConnectionRetryTimer.DisposeAsync().ConfigureAwait(false);
 		}
 
 		if (GamesRedeemerInBackgroundTimer != null) {
@@ -1990,6 +1998,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 			KeepRunning = false;
 
+			// Reset connection retry state when bot is manually stopped
+			ConsecutiveConnectionFailures = 0;
+			LastConnectionAttempt = null;
+			StopConnectionRetryTimer();
+
 			ArchiLogger.LogGenericInfo(Strings.BotStopping);
 
 			if (SteamClient.IsConnected) {
@@ -2030,6 +2043,39 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
+		// Implement exponential backoff for connection retries
+		if (ConsecutiveConnectionFailures > 0) {
+			// Calculate exponential backoff delay: 2^failures seconds (capped at 5 minutes)
+			int backoffSeconds = (int) Math.Min(Math.Pow(2, ConsecutiveConnectionFailures), 300);
+			TimeSpan backoffDelay = TimeSpan.FromSeconds(backoffSeconds);
+
+			if (LastConnectionAttempt.HasValue) {
+				TimeSpan timeSinceLastAttempt = DateTime.UtcNow - LastConnectionAttempt.Value;
+
+				if (timeSinceLastAttempt < backoffDelay) {
+					TimeSpan remainingDelay = backoffDelay - timeSinceLastAttempt;
+					ArchiLogger.LogGenericWarning($"Connection retry #{ConsecutiveConnectionFailures + 1}: Waiting {remainingDelay.TotalSeconds:F0} seconds before reconnecting...");
+
+					// Schedule a delayed reconnection
+					if (ConnectionRetryTimer != null) {
+						await ConnectionRetryTimer.DisposeAsync().ConfigureAwait(false);
+					}
+
+					ConnectionRetryTimer = new Timer(
+						async _ => await Connect().ConfigureAwait(false),
+						null,
+						remainingDelay,
+						Timeout.InfiniteTimeSpan
+					);
+
+					return;
+				}
+			}
+
+			ArchiLogger.LogGenericWarning($"Connection retry #{ConsecutiveConnectionFailures + 1}: Attempting to reconnect after {backoffSeconds} second backoff period...");
+		}
+
+		LastConnectionAttempt = DateTime.UtcNow;
 		LastLogOnResult = EResult.Invalid;
 		ReconnectOnUserInitiated = false;
 
@@ -2559,6 +2605,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
+		// Reset consecutive connection failures as we're doing a hard restart
+		ConsecutiveConnectionFailures = 0;
+		LastConnectionAttempt = null;
+
 		ArchiLogger.LogGenericWarning(Strings.BotHeartBeatFailed);
 		await Destroy(true).ConfigureAwait(false);
 		await RegisterBot(BotName).ConfigureAwait(false);
@@ -2714,7 +2764,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		HeartBeatFailures = 0;
 		ReconnectOnUserInitiated = false;
+		ConsecutiveConnectionFailures = 0; // Reset failure counter on successful connection
 		StopConnectionFailureTimer();
+		StopConnectionRetryTimer();
 
 		ArchiLogger.LogGenericInfo(Strings.BotConnected);
 
@@ -2873,8 +2925,14 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		HeartBeatFailures = 0;
 		StopConnectionFailureTimer();
+		StopConnectionRetryTimer();
 		StopPlayingWasBlockedTimer();
 		StopRefreshTokensTimer();
+
+		// Increment consecutive connection failures for exponential backoff
+		if (KeepRunning && (ConsecutiveConnectionFailures < byte.MaxValue)) {
+			ConsecutiveConnectionFailures++;
+		}
 
 		ArchiLogger.LogGenericInfo(Strings.BotDisconnected);
 
@@ -4002,6 +4060,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		ConnectionFailureTimer.Dispose();
 		ConnectionFailureTimer = null;
+	}
+
+	private void StopConnectionRetryTimer() {
+		if (ConnectionRetryTimer == null) {
+			return;
+		}
+
+		ConnectionRetryTimer.Dispose();
+		ConnectionRetryTimer = null;
 	}
 
 	private async Task StopHandlingCallbacks() {
