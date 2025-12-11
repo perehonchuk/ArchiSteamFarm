@@ -200,6 +200,8 @@ public sealed class Commands {
 						return await ResponseAddLicense(access, args[1]).ConfigureAwait(false);
 					case "ALA":
 						return await ResponseAddLicense(access, SharedInfo.ASF, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "ALFLUSH":
+						return await ResponseFlushLicenses(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "BALANCE":
 						return await ResponseWalletBalance(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "BGR":
@@ -741,6 +743,37 @@ public sealed class Commands {
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseAddLicense(GetProxyAccess(bot, access, steamID), query))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponseFlushLicenses(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		if (access < EAccess.Operator) {
+			return null;
+		}
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<int> results = await Utilities.InParallel(bots.Select(static bot => bot.Actions.FlushPendingLicenses())).ConfigureAwait(false);
+
+		List<string> responses = [];
+
+		for (int i = 0; i < bots.Count; i++) {
+			Bot bot = bots.ElementAt(i);
+			int pending = results[i];
+
+			responses.Add(FormatBotResponse(bot.BotName, $"Flushed {pending} pending license(s)"));
+		}
 
 		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
 	}

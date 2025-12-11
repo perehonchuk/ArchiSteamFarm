@@ -49,14 +49,20 @@ namespace ArchiSteamFarm.Steam.Interaction;
 
 public sealed class Actions : IAsyncDisposable, IDisposable {
 	private static readonly SemaphoreSlim GiftCardsSemaphore = new(1, 1);
+	private const byte LicenseBatchSize = 10;
+	private const ushort LicenseBatchDelayMilliseconds = 2000;
 
 	private readonly Bot Bot;
 	private readonly ConcurrentHashSet<ulong> HandledGifts = [];
 	private readonly SemaphoreSlim TradingSemaphore = new(1, 1);
+	private readonly SemaphoreSlim LicenseBatchSemaphore = new(1, 1);
+	private readonly Queue<uint> PendingAppLicenses = new();
+	private readonly Queue<uint> PendingPackageLicenses = new();
 
 	private Timer? CardsFarmerResumeTimer;
 	private bool ProcessingGiftsScheduled;
 	private bool TradingScheduled;
+	private bool ProcessingLicenseBatchScheduled;
 
 	internal Actions(Bot bot) {
 		ArgumentNullException.ThrowIfNull(bot);
@@ -67,6 +73,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	public void Dispose() {
 		// Those are objects that are always being created if constructor doesn't throw exception
 		TradingSemaphore.Dispose();
+		LicenseBatchSemaphore.Dispose();
 
 		// Those are objects that might be null and the check should be in-place
 		CardsFarmerResumeTimer?.Dispose();
@@ -75,6 +82,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	public async ValueTask DisposeAsync() {
 		// Those are objects that are always being created if constructor doesn't throw exception
 		TradingSemaphore.Dispose();
+		LicenseBatchSemaphore.Dispose();
 
 		// Those are objects that might be null and the check should be in-place
 		if (CardsFarmerResumeTimer != null) {
@@ -86,6 +94,20 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	public async Task<(EResult Result, IReadOnlyCollection<uint>? GrantedApps, IReadOnlyCollection<uint>? GrantedPackages)> AddFreeLicenseApp(uint appID) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 
+		await LicenseBatchSemaphore.WaitAsync().ConfigureAwait(false);
+
+		try {
+			PendingAppLicenses.Enqueue(appID);
+
+			if (!ProcessingLicenseBatchScheduled) {
+				ProcessingLicenseBatchScheduled = true;
+				Utilities.InBackground(ProcessLicenseBatch);
+			}
+		} finally {
+			LicenseBatchSemaphore.Release();
+		}
+
+		// For now, return a pending status since actual processing is batched
 		SteamApps.FreeLicenseCallback callback;
 
 		try {
@@ -103,7 +125,40 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	public async Task<(EResult Result, EPurchaseResultDetail PurchaseResultDetail)> AddFreeLicensePackage(uint subID) {
 		ArgumentOutOfRangeException.ThrowIfZero(subID);
 
+		await LicenseBatchSemaphore.WaitAsync().ConfigureAwait(false);
+
+		try {
+			PendingPackageLicenses.Enqueue(subID);
+
+			if (!ProcessingLicenseBatchScheduled) {
+				ProcessingLicenseBatchScheduled = true;
+				Utilities.InBackground(ProcessLicenseBatch);
+			}
+		} finally {
+			LicenseBatchSemaphore.Release();
+		}
+
 		return await Bot.ArchiWebHandler.AddFreeLicense(subID).ConfigureAwait(false);
+	}
+
+	[PublicAPI]
+	public async Task<int> FlushPendingLicenses() {
+		await LicenseBatchSemaphore.WaitAsync().ConfigureAwait(false);
+
+		int totalPending;
+
+		try {
+			totalPending = PendingAppLicenses.Count + PendingPackageLicenses.Count;
+
+			if ((totalPending > 0) && !ProcessingLicenseBatchScheduled) {
+				ProcessingLicenseBatchScheduled = true;
+				Utilities.InBackground(ProcessLicenseBatch);
+			}
+		} finally {
+			LicenseBatchSemaphore.Release();
+		}
+
+		return totalPending;
 	}
 
 	[PublicAPI]
@@ -704,6 +759,72 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	internal void OnDisconnected() => HandledGifts.Clear();
+
+	private async Task ProcessLicenseBatch() {
+		await LicenseBatchSemaphore.WaitAsync().ConfigureAwait(false);
+
+		try {
+			ProcessingLicenseBatchScheduled = false;
+
+			// Process app licenses in batches
+			while (PendingAppLicenses.Count > 0) {
+				List<uint> batch = [];
+
+				for (int i = 0; (i < LicenseBatchSize) && (PendingAppLicenses.Count > 0); i++) {
+					batch.Add(PendingAppLicenses.Dequeue());
+				}
+
+				if (batch.Count == 0) {
+					break;
+				}
+
+				Bot.ArchiLogger.LogGenericInfo($"Processing batch of {batch.Count} app license(s)");
+
+				foreach (uint appID in batch) {
+					try {
+						SteamApps.FreeLicenseCallback callback = await Bot.SteamApps.RequestFreeLicense(appID).ToLongRunningTask().ConfigureAwait(false);
+						Bot.ArchiLogger.LogGenericDebug($"App {appID}: {callback.Result}");
+					} catch (Exception e) {
+						Bot.ArchiLogger.LogGenericWarningException(e);
+					}
+				}
+
+				if (PendingAppLicenses.Count > 0) {
+					await Task.Delay(LicenseBatchDelayMilliseconds).ConfigureAwait(false);
+				}
+			}
+
+			// Process package licenses in batches
+			while (PendingPackageLicenses.Count > 0) {
+				List<uint> batch = [];
+
+				for (int i = 0; (i < LicenseBatchSize) && (PendingPackageLicenses.Count > 0); i++) {
+					batch.Add(PendingPackageLicenses.Dequeue());
+				}
+
+				if (batch.Count == 0) {
+					break;
+				}
+
+				Bot.ArchiLogger.LogGenericInfo($"Processing batch of {batch.Count} package license(s)");
+
+				foreach (uint subID in batch) {
+					try {
+						(EResult result, EPurchaseResultDetail purchaseResult) = await Bot.ArchiWebHandler.AddFreeLicense(subID).ConfigureAwait(false);
+						Bot.ArchiLogger.LogGenericDebug($"Package {subID}: {result}/{purchaseResult}");
+					} catch (Exception e) {
+						Bot.ArchiLogger.LogGenericWarningException(e);
+					}
+				}
+
+				if (PendingPackageLicenses.Count > 0) {
+					await Task.Delay(LicenseBatchDelayMilliseconds).ConfigureAwait(false);
+				}
+			}
+		} finally {
+			LicenseBatchSemaphore.Release();
+		}
+	}
 
 	private static async Task LimitGiftsRequestsAsync() {
 		if (ASF.GiftsSemaphore == null) {
