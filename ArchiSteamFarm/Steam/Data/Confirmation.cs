@@ -75,4 +75,21 @@ public sealed class Confirmation {
 		FamilyJoin = 11,
 		AccountSecurity = 12
 	}
+
+	internal static byte GetConfirmationTypePriority(EConfirmationType confirmationType) {
+		// Lower value = higher priority
+		// Critical security confirmations should be processed first
+		return confirmationType switch {
+			EConfirmationType.AccountSecurity => 1,  // Highest priority - account security changes
+			EConfirmationType.AccountRecovery => 2,  // High priority - account recovery
+			EConfirmationType.PhoneNumberChange => 3, // High priority - phone changes
+			EConfirmationType.ApiKeyRegistration => 4, // Medium-high priority - API access
+			EConfirmationType.FamilyJoin => 5,       // Medium priority - family sharing
+			EConfirmationType.Trade => 10,           // Normal priority - trades
+			EConfirmationType.Market => 11,          // Normal priority - market transactions
+			EConfirmationType.Generic => 20,         // Low priority - generic confirmations
+			EConfirmationType.Unknown => 99,         // Lowest priority - unknown types
+			_ => 50                                  // Default medium-low priority
+		};
+	}
 }

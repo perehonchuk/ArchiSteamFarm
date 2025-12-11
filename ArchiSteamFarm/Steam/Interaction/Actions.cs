@@ -257,23 +257,42 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 				}
 			}
 
-			if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(remainingConfirmations, accept).ConfigureAwait(false)) {
-				return (false, handledConfirmations?.Values, Strings.WarningFailed);
-			}
+			// Process confirmations in batches by priority level
+			// Group confirmations by priority to ensure critical confirmations are handled first
+			var priorityGroups = remainingConfirmations
+				.GroupBy(confirmation => Confirmation.GetConfirmationTypePriority(confirmation.ConfirmationType))
+				.OrderBy(group => group.Key)
+				.ToList();
 
-			handledConfirmations ??= new Dictionary<ulong, Confirmation>();
+			foreach (var priorityGroup in priorityGroups) {
+				List<Confirmation> batchConfirmations = [..priorityGroup];
 
-			foreach (Confirmation confirmation in remainingConfirmations) {
-				handledConfirmations[confirmation.CreatorID] = confirmation;
+				if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(batchConfirmations, accept).ConfigureAwait(false)) {
+					// If a high-priority batch fails, we should still continue with lower priority batches
+					// but track this failure for logging purposes
+					Bot.ArchiLogger.LogGenericWarning($"Failed to handle {batchConfirmations.Count} confirmation(s) with priority level {priorityGroup.Key}");
+
+					continue;
+				}
+
+				handledConfirmations ??= new Dictionary<ulong, Confirmation>();
+
+				foreach (Confirmation confirmation in batchConfirmations) {
+					handledConfirmations[confirmation.CreatorID] = confirmation;
+				}
 			}
 
 			// We've accepted *something*, if caller didn't specify the IDs, that's enough for us
 			if ((acceptedCreatorIDs == null) || (acceptedCreatorIDs.Count == 0)) {
-				return (true, handledConfirmations.Values, Strings.FormatBotHandledConfirmations(handledConfirmations.Count));
+				if (handledConfirmations != null) {
+					return (true, handledConfirmations.Values, Strings.FormatBotHandledConfirmations(handledConfirmations.Count));
+				}
+
+				continue;
 			}
 
 			// If they did, check if we've already found everything we were supposed to
-			if ((handledConfirmations.Count >= acceptedCreatorIDs.Count) && acceptedCreatorIDs.All(handledConfirmations.ContainsKey)) {
+			if ((handledConfirmations != null) && (handledConfirmations.Count >= acceptedCreatorIDs.Count) && acceptedCreatorIDs.All(handledConfirmations.ContainsKey)) {
 				return (true, handledConfirmations.Values, Strings.FormatBotHandledConfirmations(handledConfirmations.Count));
 			}
 		}

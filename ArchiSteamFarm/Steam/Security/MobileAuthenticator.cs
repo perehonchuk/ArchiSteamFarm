@@ -198,7 +198,14 @@ public sealed class MobileAuthenticator : IDisposable {
 			Bot.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(confirmation.ConfirmationType), $"{confirmation.ConfirmationType} ({confirmation.ConfirmationTypeName ?? "null"})"));
 		}
 
-		return response.Confirmations;
+		// Sort confirmations by priority (lower priority value = higher priority)
+		// This ensures critical security confirmations are processed first
+		ImmutableHashSet<Confirmation> sortedConfirmations = response.Confirmations
+			.OrderBy(static confirmation => Confirmation.GetConfirmationTypePriority(confirmation.ConfirmationType))
+			.ThenBy(static confirmation => confirmation.ID)
+			.ToImmutableHashSet();
+
+		return sortedConfirmations;
 	}
 
 	internal async Task<ulong> GetSteamTime() {
