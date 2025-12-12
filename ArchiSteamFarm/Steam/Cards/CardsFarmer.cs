@@ -54,6 +54,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
+	private const byte MilestonePauseCheckMinutes = 15; // How often to check for milestone transitions that trigger auto-pause
 
 	[PublicAPI]
 	public static readonly FrozenSet<uint> SalesBlacklist = [267420, 303700, 335590, 368020, 425280, 480730, 566020, 639900, 762800, 876740, 991980, 1195670, 1343890, 1465680, 1658760, 1797760, 2021850, 2243720, 2459330, 2640280, 2861690, 2861720, 3558920];
@@ -130,6 +131,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private readonly Timer? IdleFarmingTimer;
 
 	private readonly ConcurrentDictionary<uint, DateTime> LocallyIgnoredAppIDs = new();
+	private readonly ConcurrentDictionary<uint, Game.EPlaytimeMilestone> LastMilestones = new();
+	private readonly Timer? MilestoneCheckTimer;
 
 	private IEnumerable<ConcurrentDictionary<uint, DateTime>> SourcesOfIgnoredAppIDs {
 		get {
@@ -171,6 +174,13 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 				TimeSpan.FromHours(idleFarmingPeriod) // Period
 			);
 		}
+
+		MilestoneCheckTimer = new Timer(
+			CheckMilestoneTransitions,
+			null,
+			TimeSpan.FromMinutes(MilestonePauseCheckMinutes), // Delay
+			TimeSpan.FromMinutes(MilestonePauseCheckMinutes) // Period
+		);
 	}
 
 	public void Dispose() {
@@ -180,6 +190,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 		// Those are objects that might be null and the check should be in-place
 		IdleFarmingTimer?.Dispose();
+		MilestoneCheckTimer?.Dispose();
 	}
 
 	public async ValueTask DisposeAsync() {
@@ -190,6 +201,10 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// Those are objects that might be null and the check should be in-place
 		if (IdleFarmingTimer != null) {
 			await IdleFarmingTimer.DisposeAsync().ConfigureAwait(false);
+		}
+
+		if (MilestoneCheckTimer != null) {
+			await MilestoneCheckTimer.DisposeAsync().ConfigureAwait(false);
 		}
 	}
 
@@ -1538,6 +1553,14 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 					};
 
 					break;
+				case BotConfig.EFarmingOrder.PlaytimeMilestonesAscending:
+					orderedGamesToFarm = orderedGamesToFarm.ThenBy(static game => game.PlaytimeMilestone);
+
+					break;
+				case BotConfig.EFarmingOrder.PlaytimeMilestonesDescending:
+					orderedGamesToFarm = orderedGamesToFarm.ThenByDescending(static game => game.PlaytimeMilestone);
+
+					break;
 				default:
 					Bot.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(farmingOrder), farmingOrder));
 
@@ -1548,5 +1571,31 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// We must call ToList() here as we can't do in-place replace
 		List<Game> gamesToFarm = orderedGamesToFarm.ToList();
 		GamesToFarm.ReplaceWith(gamesToFarm);
+	}
+
+	private void CheckMilestoneTransitions(object? state = null) {
+		if (!NowFarming || Paused) {
+			return;
+		}
+
+		// Check all currently farming games for milestone transitions
+		foreach (Game game in CurrentGamesFarming) {
+			Game.EPlaytimeMilestone currentMilestone = game.PlaytimeMilestone;
+
+			// Track last known milestone
+			if (!LastMilestones.TryGetValue(game.AppID, out Game.EPlaytimeMilestone lastMilestone)) {
+				LastMilestones[game.AppID] = currentMilestone;
+				continue;
+			}
+
+			// If milestone has changed, trigger temporary pause
+			if (currentMilestone != lastMilestone) {
+				Bot.ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.FarmingMilestoneReached, game.GameName, lastMilestone, currentMilestone));
+				LastMilestones[game.AppID] = currentMilestone;
+
+				// Auto-pause for 5 minutes when crossing milestone boundaries
+				Utilities.InBackground(async () => await SetPaused(true, 300).ConfigureAwait(false));
+			}
+		}
 	}
 }
