@@ -212,13 +212,13 @@ public sealed class BotController : ArchiController {
 			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
-		IList<(Dictionary<string, string>? UnusedKeys, Dictionary<string, string>? UsedKeys)> results = await Utilities.InParallel(bots.Select(static bot => bot.GetUsedAndUnusedKeys())).ConfigureAwait(false);
+		IList<(Dictionary<string, string>? FailedKeys, Dictionary<string, string>? UnusedKeys, Dictionary<string, string>? UsedKeys)> results = await Utilities.InParallel(bots.Select(static bot => bot.GetUsedAndUnusedKeys())).ConfigureAwait(false);
 
 		Dictionary<string, GamesToRedeemInBackgroundResponse> result = new(bots.Count, Bot.BotsComparer);
 
 		foreach (Bot bot in bots) {
-			(Dictionary<string, string>? unusedKeys, Dictionary<string, string>? usedKeys) = results[result.Count];
-			result[bot.BotName] = new GamesToRedeemInBackgroundResponse(unusedKeys, usedKeys);
+			(Dictionary<string, string>? failedKeys, Dictionary<string, string>? unusedKeys, Dictionary<string, string>? usedKeys) = results[result.Count];
+			result[bot.BotName] = new GamesToRedeemInBackgroundResponse(failedKeys, unusedKeys, usedKeys);
 		}
 
 		return Ok(new GenericResponse<IReadOnlyDictionary<string, GamesToRedeemInBackgroundResponse>>(result));

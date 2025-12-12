@@ -666,6 +666,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			EFileType.Config => $"{botPath}{SharedInfo.JsonConfigExtension}",
 			EFileType.Database => $"{botPath}{SharedInfo.DatabaseExtension}",
 			EFileType.KeysToRedeem => $"{botPath}{SharedInfo.KeysExtension}",
+			EFileType.KeysToRedeemFailed => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysFailedExtension}",
 			EFileType.KeysToRedeemUnused => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysUnusedExtension}",
 			EFileType.KeysToRedeemUsed => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysUsedExtension}",
 			EFileType.MobileAuthenticator => $"{botPath}{SharedInfo.MobileAuthenticatorExtension}",
@@ -1413,12 +1414,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		return result;
 	}
 
-	internal async Task<(Dictionary<string, string>? UnusedKeys, Dictionary<string, string>? UsedKeys)> GetUsedAndUnusedKeys() {
-		string[] files = [GetFilePath(EFileType.KeysToRedeemUnused), GetFilePath(EFileType.KeysToRedeemUsed)];
+	internal async Task<(Dictionary<string, string>? FailedKeys, Dictionary<string, string>? UnusedKeys, Dictionary<string, string>? UsedKeys)> GetUsedAndUnusedKeys() {
+		string[] files = [GetFilePath(EFileType.KeysToRedeemFailed), GetFilePath(EFileType.KeysToRedeemUnused), GetFilePath(EFileType.KeysToRedeemUsed)];
 
 		IList<Dictionary<string, string>?> results = await Utilities.InParallel(files.Select(GetKeysFromFile)).ConfigureAwait(false);
 
-		return (results[0], results[1]);
+		return (results[0], results[1], results[2]);
 	}
 
 	internal async Task<bool?> HasPublicInventory() {
@@ -3670,15 +3671,19 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				bool rateLimited = false;
 				bool redeemed = false;
+				bool failed = false;
 
 				switch (purchaseResultDetail) {
 					case EPurchaseResultDetail.AccountLocked:
-					case EPurchaseResultDetail.AlreadyPurchased:
 					case EPurchaseResultDetail.CannotRedeemCodeFromClient:
 					case EPurchaseResultDetail.DoesNotOwnRequiredApp:
 					case EPurchaseResultDetail.NoWallet:
 					case EPurchaseResultDetail.RestrictedCountry:
 					case EPurchaseResultDetail.Timeout:
+						failed = true;
+
+						break;
+					case EPurchaseResultDetail.AlreadyPurchased:
 						break;
 					case EPurchaseResultDetail.BadActivationCode:
 					case EPurchaseResultDetail.DuplicateActivationCode:
@@ -3711,7 +3716,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				string logEntry = $"{name}{DefaultBackgroundKeysRedeemerSeparator}[{purchaseResultDetail}]{(items?.Count > 0 ? $"{DefaultBackgroundKeysRedeemerSeparator}{string.Join(", ", items)}" : "")}{DefaultBackgroundKeysRedeemerSeparator}{key}";
 
-				string filePath = GetFilePath(redeemed ? EFileType.KeysToRedeemUsed : EFileType.KeysToRedeemUnused);
+				EFileType targetFileType = redeemed ? EFileType.KeysToRedeemUsed : failed ? EFileType.KeysToRedeemFailed : EFileType.KeysToRedeemUnused;
+				string filePath = GetFilePath(targetFileType);
 
 				if (string.IsNullOrEmpty(filePath)) {
 					ArchiLogger.LogNullError(filePath);
@@ -4174,6 +4180,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		Config,
 		Database,
 		KeysToRedeem,
+		KeysToRedeemFailed,
 		KeysToRedeemUnused,
 		KeysToRedeemUsed,
 		MobileAuthenticator

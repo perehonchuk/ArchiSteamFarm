@@ -29,6 +29,10 @@ using System.Text.Json.Serialization;
 namespace ArchiSteamFarm.IPC.Responses;
 
 public sealed class GamesToRedeemInBackgroundResponse {
+	[Description("Keys that failed to redeem due to errors, if available")]
+	[JsonInclude]
+	public ImmutableDictionary<string, string>? FailedKeys { get; private init; }
+
 	[Description("Keys that were redeemed and not used during the process, if available")]
 	[JsonInclude]
 	public ImmutableDictionary<string, string>? UnusedKeys { get; private init; }
@@ -37,7 +41,8 @@ public sealed class GamesToRedeemInBackgroundResponse {
 	[JsonInclude]
 	public ImmutableDictionary<string, string>? UsedKeys { get; private init; }
 
-	internal GamesToRedeemInBackgroundResponse(IReadOnlyDictionary<string, string>? unusedKeys = null, IReadOnlyDictionary<string, string>? usedKeys = null) {
+	internal GamesToRedeemInBackgroundResponse(IReadOnlyDictionary<string, string>? failedKeys = null, IReadOnlyDictionary<string, string>? unusedKeys = null, IReadOnlyDictionary<string, string>? usedKeys = null) {
+		FailedKeys = failedKeys?.ToImmutableDictionary();
 		UnusedKeys = unusedKeys?.ToImmutableDictionary();
 		UsedKeys = usedKeys?.ToImmutableDictionary();
 	}
