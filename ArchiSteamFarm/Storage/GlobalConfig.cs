@@ -109,6 +109,9 @@ public sealed class GlobalConfig {
 	public const EOptimizationMode DefaultOptimizationMode = EOptimizationMode.MaxPerformance;
 
 	[PublicAPI]
+	public const byte DefaultPluginsUpdateNotificationHours = 72;
+
+	[PublicAPI]
 	public const EPluginsUpdateMode DefaultPluginsUpdateMode = EPluginsUpdateMode.Whitelist;
 
 	[PublicAPI]
@@ -298,6 +301,10 @@ public sealed class GlobalConfig {
 	public EPluginsUpdateMode PluginsUpdateMode { get; init; } = DefaultPluginsUpdateMode;
 
 	[JsonInclude]
+	[Range(0, byte.MaxValue)]
+	public byte PluginsUpdateNotificationHours { get; init; } = DefaultPluginsUpdateNotificationHours;
+
+	[JsonInclude]
 	public bool ShutdownIfPossible { get; init; } = DefaultShutdownIfPossible;
 
 	[JsonInclude]
@@ -443,6 +450,9 @@ public sealed class GlobalConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializePluginsUpdateMode() => !Saving || (PluginsUpdateMode != DefaultPluginsUpdateMode);
+
+	[UsedImplicitly]
+	public bool ShouldSerializePluginsUpdateNotificationHours() => !Saving || (PluginsUpdateNotificationHours != DefaultPluginsUpdateNotificationHours);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeShutdownIfPossible() => !Saving || (ShutdownIfPossible != DefaultShutdownIfPossible);

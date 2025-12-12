@@ -60,6 +60,7 @@ public static class PluginsCore {
 	internal static FrozenSet<IPlugin> ActivePlugins { get; private set; } = [];
 
 	private static FrozenSet<IPluginUpdates> ActivePluginUpdates = [];
+	private static Dictionary<string, PluginUpdateNotification> PendingPluginUpdates = new();
 
 	[PublicAPI]
 	public static async Task<ICrossProcessSemaphore> GetCrossProcessSemaphore(string objectName) {
@@ -866,6 +867,35 @@ public static class PluginsCore {
 				return false;
 			}
 
+			// Check notification delay logic
+			byte notificationHours = ASF.GlobalConfig?.PluginsUpdateNotificationHours ?? GlobalConfig.DefaultPluginsUpdateNotificationHours;
+
+			if (!updateOverride && !forced && (notificationHours > 0)) {
+				if (!PendingPluginUpdates.TryGetValue(pluginName, out PluginUpdateNotification? notification)) {
+					// First time detecting this update - create notification
+					Version? pluginVersion = plugin.Version;
+					notification = new PluginUpdateNotification(releaseURL, pluginVersion, updateChannel, notificationHours);
+					PendingPluginUpdates[pluginName] = notification;
+
+					TimeSpan waitTime = notification.ReadyAt - DateTime.UtcNow;
+					ASF.ArchiLogger.LogGenericInfo($"Plugin update available for {pluginName}. Update will be applied automatically in {waitTime.TotalHours:F1} hours (at {notification.ReadyAt:u}).");
+
+					return false;
+				}
+
+				// Notification exists - check if it's ready
+				if (!notification.IsReady()) {
+					TimeSpan remaining = notification.ReadyAt - DateTime.UtcNow;
+					ASF.ArchiLogger.LogGenericInfo($"Plugin update for {pluginName} is pending. Will be applied in {remaining.TotalHours:F1} hours (at {notification.ReadyAt:u}).");
+
+					return false;
+				}
+
+				// Notification period expired - proceed with update and remove from pending
+				ASF.ArchiLogger.LogGenericInfo($"Plugin update notification period expired for {pluginName}. Proceeding with update.");
+				PendingPluginUpdates.Remove(pluginName);
+			}
+
 			ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginUpdateInProgress(pluginName));
 
 			Progress<byte> progressReporter = new();
@@ -924,5 +954,31 @@ public static class PluginsCore {
 
 			Utilities.OnProgressChanged(pluginName, progressPercentage);
 		}
+	}
+
+	internal static IReadOnlyDictionary<string, PluginUpdateNotification> GetPendingPluginUpdates() => PendingPluginUpdates;
+
+	internal sealed class PluginUpdateNotification {
+		internal DateTime DetectedAt { get; }
+		internal DateTime ReadyAt { get; }
+		internal Uri ReleaseURL { get; }
+		internal Version? NewVersion { get; }
+		internal GlobalConfig.EUpdateChannel Channel { get; }
+
+		internal PluginUpdateNotification(Uri releaseURL, Version? newVersion, GlobalConfig.EUpdateChannel channel, byte notificationHours) {
+			ArgumentNullException.ThrowIfNull(releaseURL);
+
+			if (!Enum.IsDefined(channel)) {
+				throw new InvalidEnumArgumentException(nameof(channel), (int) channel, typeof(GlobalConfig.EUpdateChannel));
+			}
+
+			DetectedAt = DateTime.UtcNow;
+			ReadyAt = DetectedAt.AddHours(notificationHours);
+			ReleaseURL = releaseURL;
+			NewVersion = newVersion;
+			Channel = channel;
+		}
+
+		internal bool IsReady() => DateTime.UtcNow >= ReadyAt;
 	}
 }

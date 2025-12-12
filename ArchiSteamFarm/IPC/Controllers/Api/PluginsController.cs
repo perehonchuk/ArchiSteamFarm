@@ -59,6 +59,15 @@ public sealed class PluginsController : ArchiController {
 		return Ok(new GenericResponse<IReadOnlyCollection<IPlugin>>(result));
 	}
 
+	[EndpointSummary("Gets pending plugin updates that are waiting for notification period to expire")]
+	[HttpGet("PendingUpdates")]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, PluginsCore.PluginUpdateNotification>>>((int) HttpStatusCode.OK)]
+	public ActionResult<GenericResponse<IReadOnlyDictionary<string, PluginsCore.PluginUpdateNotification>>> PendingUpdatesGet() {
+		IReadOnlyDictionary<string, PluginsCore.PluginUpdateNotification> pendingUpdates = PluginsCore.GetPendingPluginUpdates();
+
+		return Ok(new GenericResponse<IReadOnlyDictionary<string, PluginsCore.PluginUpdateNotification>>(pendingUpdates));
+	}
+
 	[EndpointSummary("Makes ASF update selected plugins")]
 	[HttpPost("Update")]
 	[ProducesResponseType<GenericResponse<string>>((int) HttpStatusCode.OK)]
