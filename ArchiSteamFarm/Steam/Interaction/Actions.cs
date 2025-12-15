@@ -86,6 +86,11 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	public async Task<(EResult Result, IReadOnlyCollection<uint>? GrantedApps, IReadOnlyCollection<uint>? GrantedPackages)> AddFreeLicenseApp(uint appID) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 
+		// Pre-activation validation
+		if (!ValidateAccountEligibilityForLicenses()) {
+			Bot.ArchiLogger.LogGenericWarning("Account may not be eligible for license activation due to restrictions.");
+		}
+
 		SteamApps.FreeLicenseCallback callback;
 
 		try {
@@ -103,7 +108,32 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	public async Task<(EResult Result, EPurchaseResultDetail PurchaseResultDetail)> AddFreeLicensePackage(uint subID) {
 		ArgumentOutOfRangeException.ThrowIfZero(subID);
 
+		// Pre-activation validation
+		if (!ValidateAccountEligibilityForLicenses()) {
+			Bot.ArchiLogger.LogGenericWarning("Account may not be eligible for license activation due to restrictions.");
+		}
+
 		return await Bot.ArchiWebHandler.AddFreeLicense(subID).ConfigureAwait(false);
+	}
+
+	[PublicAPI]
+	public bool ValidateAccountEligibilityForLicenses() {
+		// Check if account is limited
+		if (Bot.IsAccountLimited) {
+			Bot.ArchiLogger.LogGenericWarning("Account is limited, which may prevent license activation.");
+
+			return false;
+		}
+
+		// Check if account has sufficient wallet balance (for non-free items)
+		if (Bot.WalletBalance == 0) {
+			Bot.ArchiLogger.LogGenericDebug("Account has zero wallet balance.");
+		}
+
+		// Log account status for transparency
+		Bot.ArchiLogger.LogGenericInfo($"License activation validation: Account is eligible. Limited={Bot.IsAccountLimited}, WalletBalance={Bot.WalletBalance}, Currency={Bot.WalletCurrency}");
+
+		return true;
 	}
 
 	[PublicAPI]

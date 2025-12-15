@@ -651,6 +651,11 @@ public sealed class Commands {
 
 		string[] entries = query.Split(SharedInfo.ListElementSeparators, StringSplitOptions.RemoveEmptyEntries);
 
+		// Phase 1: Parse and group licenses by type
+		List<uint> appLicenses = [];
+		List<uint> subLicenses = [];
+		List<string> invalidEntries = [];
+
 		foreach (string entry in entries) {
 			uint gameID;
 			string type;
@@ -659,7 +664,7 @@ public sealed class Commands {
 
 			if ((index > 0) && (entry.Length > index + 1)) {
 				if (!uint.TryParse(entry[(index + 1)..], out gameID) || (gameID == 0)) {
-					response.AppendLine(FormatBotResponse(Strings.FormatErrorIsInvalid(nameof(gameID))));
+					invalidEntries.Add(entry);
 
 					continue;
 				}
@@ -668,56 +673,80 @@ public sealed class Commands {
 			} else if (uint.TryParse(entry, out gameID) && (gameID > 0)) {
 				type = "SUB";
 			} else {
-				response.AppendLine(FormatBotResponse(Strings.FormatErrorIsInvalid(nameof(gameID))));
+				invalidEntries.Add(entry);
 
 				continue;
 			}
 
 			switch (type.ToUpperInvariant()) {
-				case "A" or "APP": {
-					HashSet<uint>? packageIDs = ASF.GlobalDatabase?.GetPackageIDs(gameID, Bot.OwnedPackages.Keys, 1);
+				case "A" or "APP":
+					appLicenses.Add(gameID);
 
-					if (packageIDs is { Count: > 0 }) {
-						response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicense($"app/{gameID}", $"{EResult.Fail}/{EPurchaseResultDetail.AlreadyPurchased}")));
+					break;
+				case "S" or "SUB":
+					subLicenses.Add(gameID);
 
-						break;
-					}
+					break;
+				default:
+					invalidEntries.Add(entry);
 
-					(EResult result, IReadOnlyCollection<uint>? grantedApps, IReadOnlyCollection<uint>? grantedPackages) = await Bot.Actions.AddFreeLicenseApp(gameID).ConfigureAwait(false);
+					break;
+			}
+		}
 
-					if (((grantedApps == null) || (grantedApps.Count == 0)) && ((grantedPackages == null) || (grantedPackages.Count == 0))) {
-						response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicense($"app/{gameID}", result)));
+		// Report invalid entries first
+		foreach (string invalidEntry in invalidEntries) {
+			response.AppendLine(FormatBotResponse(Strings.FormatErrorIsInvalid(invalidEntry)));
+		}
 
-						break;
-					}
+		// Phase 2: Validate and filter owned licenses
+		List<uint> appLicensesToActivate = [];
+		List<uint> subLicensesToActivate = [];
 
+		foreach (uint appID in appLicenses) {
+			HashSet<uint>? packageIDs = ASF.GlobalDatabase?.GetPackageIDs(appID, Bot.OwnedPackages.Keys, 1);
+
+			if (packageIDs is { Count: > 0 }) {
+				response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicense($"app/{appID}", $"{EResult.Fail}/{EPurchaseResultDetail.AlreadyPurchased}")));
+			} else {
+				appLicensesToActivate.Add(appID);
+			}
+		}
+
+		foreach (uint subID in subLicenses) {
+			if (Bot.OwnedPackages.ContainsKey(subID)) {
+				response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicense($"sub/{subID}", $"{EResult.Fail}/{EPurchaseResultDetail.AlreadyPurchased}")));
+			} else {
+				subLicensesToActivate.Add(subID);
+			}
+		}
+
+		// Phase 3: Process app licenses in batch
+		if (appLicensesToActivate.Count > 0) {
+			Bot.ArchiLogger.LogGenericInfo($"Processing {appLicensesToActivate.Count} app license(s) in batch...");
+
+			foreach (uint appID in appLicensesToActivate) {
+				(EResult result, IReadOnlyCollection<uint>? grantedApps, IReadOnlyCollection<uint>? grantedPackages) = await Bot.Actions.AddFreeLicenseApp(appID).ConfigureAwait(false);
+
+				if (((grantedApps == null) || (grantedApps.Count == 0)) && ((grantedPackages == null) || (grantedPackages.Count == 0))) {
+					response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicense($"app/{appID}", result)));
+				} else {
 					grantedApps ??= [];
 					grantedPackages ??= [];
 
-					response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicenseWithItems($"app/{gameID}", result, string.Join(", ", grantedApps.Select(static appID => $"app/{appID}").Union(grantedPackages.Select(static subID => $"sub/{subID}"))))));
-
-					break;
+					response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicenseWithItems($"app/{appID}", result, string.Join(", ", grantedApps.Select(static appID => $"app/{appID}").Union(grantedPackages.Select(static subID => $"sub/{subID}"))))));
 				}
+			}
+		}
 
-				case "S" or "SUB": {
-					if (Bot.OwnedPackages.ContainsKey(gameID)) {
-						response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicense($"sub/{gameID}", $"{EResult.Fail}/{EPurchaseResultDetail.AlreadyPurchased}")));
+		// Phase 4: Process sub licenses in batch
+		if (subLicensesToActivate.Count > 0) {
+			Bot.ArchiLogger.LogGenericInfo($"Processing {subLicensesToActivate.Count} package license(s) in batch...");
 
-						break;
-					}
+			foreach (uint subID in subLicensesToActivate) {
+				(EResult result, EPurchaseResultDetail purchaseResult) = await Bot.Actions.AddFreeLicensePackage(subID).ConfigureAwait(false);
 
-					(EResult result, EPurchaseResultDetail purchaseResult) = await Bot.Actions.AddFreeLicensePackage(gameID).ConfigureAwait(false);
-
-					response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicense($"sub/{gameID}", $"{result}/{purchaseResult}")));
-
-					break;
-				}
-
-				default: {
-					response.AppendLine(FormatBotResponse(Strings.FormatErrorIsInvalid(nameof(gameID))));
-
-					continue;
-				}
+				response.AppendLine(FormatBotResponse(Strings.FormatBotAddLicense($"sub/{subID}", $"{result}/{purchaseResult}")));
 			}
 		}
 
