@@ -88,6 +88,14 @@ internal sealed class MaFileData {
 	[JsonRequired]
 	internal string Uri { get; private init; }
 
+	[JsonInclude]
+	[JsonPropertyName("backup_codes")]
+	internal string[]? BackupCodes { get; private init; }
+
+	[JsonInclude]
+	[JsonPropertyName("backup_codes_verified")]
+	internal bool BackupCodesVerified { get; set; }
+
 	internal MaFileData(CTwoFactor_AddAuthenticator_Response data, ulong steamID, string deviceID) {
 		ArgumentNullException.ThrowIfNull(data);
 
@@ -109,5 +117,27 @@ internal sealed class MaFileData {
 		Status = data.status;
 		TokenGid = data.token_gid;
 		Uri = data.uri;
+		BackupCodes = GenerateBackupCodes();
+		BackupCodesVerified = false;
+	}
+
+	private static string[] GenerateBackupCodes() {
+		const int backupCodeCount = 10;
+		const int backupCodeLength = 8;
+		const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+		string[] codes = new string[backupCodeCount];
+		Random random = new();
+
+		for (int i = 0; i < backupCodeCount; i++) {
+			char[] code = new char[backupCodeLength];
+			for (int j = 0; j < backupCodeLength; j++) {
+				code[j] = chars[random.Next(chars.Length)];
+			}
+
+			codes[i] = new string(code);
+		}
+
+		return codes;
 	}
 }

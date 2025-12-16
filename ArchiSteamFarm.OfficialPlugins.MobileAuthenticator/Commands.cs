@@ -78,6 +78,10 @@ internal static class Commands {
 						return await ResponseTwoFactorFinalized(access, Utilities.GetArgsAsText(args, 1, ","), steamID: steamID).ConfigureAwait(false);
 					case "2FAINIT":
 						return await ResponseTwoFactorInit(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "2FAVERIFYBACKUP":
+						return await ResponseTwoFactorVerifyBackup(access, bot, args[1]).ConfigureAwait(false);
+					case "2FAVERIFYBACKUP" when args.Length > 2:
+						return await ResponseTwoFactorVerifyBackup(access, args[1], Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 				}
 
 				break;
@@ -125,6 +129,13 @@ internal static class Commands {
 
 		if (string.IsNullOrEmpty(json)) {
 			return bot.Commands.FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(json)));
+		}
+
+		// Check backup code verification status
+		MaFileData? maFileDataCheck = json.ToJsonObject<MaFileData>();
+
+		if ((maFileDataCheck != null) && (maFileDataCheck.BackupCodes != null) && !maFileDataCheck.BackupCodesVerified) {
+			return bot.Commands.FormatBotResponse("WARNING: Backup codes have not been verified. Please run '2faverifybackup [Bot] <BackupCode>' first to ensure you have saved your backup codes. This is a mandatory security step.");
 		}
 
 		Steam.Security.MobileAuthenticator? mobileAuthenticator = json.ToJsonObject<Steam.Security.MobileAuthenticator>();
@@ -340,6 +351,12 @@ internal static class Commands {
 			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(e.Message));
 		}
 
+		// Display backup codes to the user
+		if (maFileData.BackupCodes != null) {
+			string backupCodesMessage = $"IMPORTANT: Save these backup codes in a secure location:\n{string.Join("\n", maFileData.BackupCodes)}";
+			bot.ArchiLogger.LogGenericInfo(backupCodesMessage);
+		}
+
 		return bot.Commands.FormatBotResponse(Strings.Done);
 	}
 
@@ -361,6 +378,97 @@ internal static class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => ResponseTwoFactorInit(Steam.Interaction.Commands.GetProxyAccess(bot, access, steamID), bot))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private static async Task<string?> ResponseTwoFactorVerifyBackup(EAccess access, Bot bot, string backupCode) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentNullException.ThrowIfNull(bot);
+		ArgumentException.ThrowIfNullOrEmpty(backupCode);
+
+		if (access < EAccess.Master) {
+			return access > EAccess.None ? bot.Commands.FormatBotResponse(Strings.ErrorAccessDenied) : null;
+		}
+
+		if (bot.HasMobileAuthenticator) {
+			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(nameof(bot.HasMobileAuthenticator)));
+		}
+
+		string maFilePath = bot.GetFilePath(Bot.EFileType.MobileAuthenticator);
+		string maFilePendingPath = $"{maFilePath}.PENDING";
+
+		if (!File.Exists(maFilePendingPath)) {
+			return bot.Commands.FormatBotResponse(Strings.NothingFound);
+		}
+
+		string json;
+
+		try {
+			json = await File.ReadAllTextAsync(maFilePendingPath).ConfigureAwait(false);
+		} catch (Exception e) {
+			bot.ArchiLogger.LogGenericException(e);
+
+			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(e.Message));
+		}
+
+		if (string.IsNullOrEmpty(json)) {
+			return bot.Commands.FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(json)));
+		}
+
+		MaFileData? maFileData = json.ToJsonObject<MaFileData>();
+
+		if (maFileData == null) {
+			return bot.Commands.FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(json)));
+		}
+
+		if ((maFileData.BackupCodes == null) || (maFileData.BackupCodes.Length == 0)) {
+			return bot.Commands.FormatBotResponse("No backup codes found. This authenticator may have been created with an older version.");
+		}
+
+		if (!maFileData.BackupCodes.Contains(backupCode.ToUpperInvariant())) {
+			return bot.Commands.FormatBotResponse("Invalid backup code provided. Please check and try again.");
+		}
+
+		maFileData.BackupCodesVerified = true;
+
+		string updatedJson = maFileData.ToJsonText(true);
+
+		try {
+			await File.WriteAllTextAsync(maFilePendingPath, updatedJson).ConfigureAwait(false);
+		} catch (Exception e) {
+			bot.ArchiLogger.LogGenericException(e);
+
+			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(e.Message));
+		}
+
+		return bot.Commands.FormatBotResponse("Backup code verified successfully! You can now proceed with 2fafinalize.");
+	}
+
+	private static async Task<string?> ResponseTwoFactorVerifyBackup(EAccess access, string botNames, string backupCode, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(backupCode);
+
+		if ((steamID != 0) && !new SteamID(steamID).IsIndividualAccount) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? Steam.Interaction.Commands.FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => ResponseTwoFactorVerifyBackup(Steam.Interaction.Commands.GetProxyAccess(bot, access, steamID), bot, backupCode))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
