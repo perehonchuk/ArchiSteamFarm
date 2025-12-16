@@ -237,9 +237,18 @@ public static class PluginsCore {
 
 		HashSet<IPlugin> invalidPlugins = [];
 
-		foreach (IPlugin plugin in activePlugins) {
+		// Sort plugins by priority (lower priority value = loaded first)
+		List<IPlugin> sortedPlugins = activePlugins.OrderBy(static plugin => plugin.Priority).ThenBy(static plugin => plugin.Name).ToList();
+
+		ASF.ArchiLogger.LogGenericInfo($"Loading {sortedPlugins.Count} plugins in priority order...");
+
+		foreach (IPlugin plugin in sortedPlugins) {
 			try {
 				ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoading(plugin.Name, plugin.Version));
+
+				if (Debugging.IsUserDebugging) {
+					ASF.ArchiLogger.LogGenericDebug($"Plugin {plugin.Name} has priority {plugin.Priority}");
+				}
 
 				if (!Program.IgnoreUnsupportedEnvironment && plugin is OfficialPlugin officialPlugin && !officialPlugin.HasSameVersion()) {
 					ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnsupportedOfficialPlugins(plugin.Name, plugin.Version, SharedInfo.Version));
@@ -268,7 +277,15 @@ public static class PluginsCore {
 			return true;
 		}
 
-		ActivePlugins = activePlugins.ToFrozenSet();
+		// Store plugins in priority order for consistent behavior across all plugin operations
+		ActivePlugins = activePlugins.OrderBy(static plugin => plugin.Priority).ThenBy(static plugin => plugin.Name).ToFrozenSet();
+
+		// Log priority distribution summary
+		Dictionary<byte, int> priorityDistribution = ActivePlugins.GroupBy(static plugin => plugin.Priority).ToDictionary(static group => group.Key, static group => group.Count());
+
+		if (priorityDistribution.Count > 0) {
+			ASF.ArchiLogger.LogGenericInfo($"Plugin priority distribution: {string.Join(", ", priorityDistribution.OrderBy(static kvp => kvp.Key).Select(static kvp => $"Priority {kvp.Key}: {kvp.Count} plugin(s)"))}");
+		}
 
 		if (HasCustomPluginsLoaded) {
 			ASF.ArchiLogger.LogGenericInfo(Strings.PluginsWarning);
@@ -312,7 +329,8 @@ public static class PluginsCore {
 				ASF.ArchiLogger.LogGenericWarning(Strings.CustomPluginUpdatesEnabled);
 			}
 
-			ActivePluginUpdates = activePluginUpdates.ToFrozenSet();
+			// Maintain priority order for plugin updates as well
+			ActivePluginUpdates = activePluginUpdates.OrderBy(static plugin => plugin.Priority).ThenBy(static plugin => plugin.Name).ToFrozenSet();
 		}
 
 		return true;
