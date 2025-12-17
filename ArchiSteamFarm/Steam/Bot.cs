@@ -74,6 +74,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private const byte MaxLoginFailures = 3; // Max login failures in a row before we determine that our credentials are invalid (because Steam wrongly returns those, of course)
 	private const byte MinimumAccessTokenValidityMinutes = 5;
 	private const byte RedeemCooldownInHours = 1; // 1 hour since first redeem attempt, this is a limitation enforced by Steam
+	private const byte MaxRedemptionRetries = 3; // Maximum number of retry attempts for failed key redemptions
+	private const byte RedemptionRetryBaseDelayMinutes = 10; // Base delay for exponential backoff (10, 20, 40 minutes)
 	private const byte RegionRestrictionPlayableBlockMonths = 3;
 
 	[PublicAPI]
@@ -3635,6 +3637,20 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					break;
 				}
 
+				// Get retry metadata if it exists
+				BotDatabase.KeyRetryMetadata? retryMetadata = BotDatabase.GetGameToRedeemRetryMetadata(key);
+				DateTime now = DateTime.UtcNow;
+
+				// Skip keys that are not yet ready for retry
+				if ((retryMetadata != null) && (retryMetadata.NextRetryTime > now)) {
+					ArchiLogger.LogGenericDebug($"Skipping key {key} (retry scheduled for {retryMetadata.NextRetryTime})");
+
+					break;
+				}
+
+				byte currentRetryCount = retryMetadata?.RetryCount ?? 0;
+				DateTime firstAttemptTime = retryMetadata?.FirstAttemptTime ?? now;
+
 				CStore_RegisterCDKey_Response? response = await Actions.RedeemKey(key).ConfigureAwait(false);
 
 				if (response == null) {
@@ -3670,6 +3686,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				bool rateLimited = false;
 				bool redeemed = false;
+				bool shouldRetry = false;
 
 				switch (purchaseResultDetail) {
 					case EPurchaseResultDetail.AccountLocked:
@@ -3678,7 +3695,14 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					case EPurchaseResultDetail.DoesNotOwnRequiredApp:
 					case EPurchaseResultDetail.NoWallet:
 					case EPurchaseResultDetail.RestrictedCountry:
+						// These are permanent failures, but DoesNotOwnRequiredApp might be worth retrying
+						shouldRetry = purchaseResultDetail == EPurchaseResultDetail.DoesNotOwnRequiredApp;
+
+						break;
 					case EPurchaseResultDetail.Timeout:
+						// Timeouts should be retried
+						shouldRetry = true;
+
 						break;
 					case EPurchaseResultDetail.BadActivationCode:
 					case EPurchaseResultDetail.DuplicateActivationCode:
@@ -3700,6 +3724,19 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					break;
 				}
 
+				// Handle retry logic for eligible failures
+				if (shouldRetry && (currentRetryCount < MaxRedemptionRetries)) {
+					byte nextRetryCount = (byte) (currentRetryCount + 1);
+					double delayMinutes = RedemptionRetryBaseDelayMinutes * Math.Pow(2, currentRetryCount);
+					DateTime nextRetryTime = now.AddMinutes(delayMinutes);
+
+					BotDatabase.UpdateGameToRedeemRetryMetadata(key, nextRetryCount, nextRetryTime, firstAttemptTime);
+
+					ArchiLogger.LogGenericInfo($"Scheduling retry {nextRetryCount}/{MaxRedemptionRetries} for key {key.Substring(0, Math.Min(5, key.Length))}... in {delayMinutes} minutes (Reason: {purchaseResultDetail})");
+
+					continue;
+				}
+
 				BotDatabase.RemoveGameToRedeemInBackground(key);
 
 				// If user omitted the name or intentionally provided the same name as key, replace it with the Steam result
@@ -3709,7 +3746,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					name = string.Join(", ", items.Values);
 				}
 
-				string logEntry = $"{name}{DefaultBackgroundKeysRedeemerSeparator}[{purchaseResultDetail}]{(items?.Count > 0 ? $"{DefaultBackgroundKeysRedeemerSeparator}{string.Join(", ", items)}" : "")}{DefaultBackgroundKeysRedeemerSeparator}{key}";
+				string retryInfo = currentRetryCount > 0 ? $" (Retry {currentRetryCount}/{MaxRedemptionRetries})" : "";
+				string logEntry = $"{name}{DefaultBackgroundKeysRedeemerSeparator}[{purchaseResultDetail}{retryInfo}]{(items?.Count > 0 ? $"{DefaultBackgroundKeysRedeemerSeparator}{string.Join(", ", items)}" : "")}{DefaultBackgroundKeysRedeemerSeparator}{key}";
 
 				string filePath = GetFilePath(redeemed ? EFileType.KeysToRedeemUsed : EFileType.KeysToRedeemUnused);
 

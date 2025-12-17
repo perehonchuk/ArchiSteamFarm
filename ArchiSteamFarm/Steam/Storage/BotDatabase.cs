@@ -194,6 +194,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	private Dictionary<string, KeyRetryMetadata> GamesToRedeemInBackgroundRetryMetadata { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
 	private BotDatabase(string filePath) : this() {
 		ArgumentException.ThrowIfNullOrEmpty(filePath);
 
@@ -263,6 +268,9 @@ public sealed class BotDatabase : GenericDatabase {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeGamesToRedeemInBackground() => HasGamesToRedeemInBackground;
+
+	[UsedImplicitly]
+	public bool ShouldSerializeGamesToRedeemInBackgroundRetryMetadata() => GamesToRedeemInBackgroundRetryMetadata.Count > 0;
 
 	[UsedImplicitly]
 	public bool ShouldSerializeMatchActivelyBlacklistAppIDs() => MatchActivelyBlacklistAppIDs.Count > 0;
@@ -381,6 +389,25 @@ public sealed class BotDatabase : GenericDatabase {
 
 	internal (string? Key, string? Name) GetGameToRedeemInBackground() {
 		lock (GamesToRedeemInBackground) {
+			DateTime now = DateTime.UtcNow;
+
+			// First, prioritize keys with retry metadata that are ready for retry
+			foreach ((string key, string name) in GamesToRedeemInBackground) {
+				if (GamesToRedeemInBackgroundRetryMetadata.TryGetValue(key, out KeyRetryMetadata? metadata)) {
+					if (metadata.NextRetryTime <= now) {
+						return (key, name);
+					}
+				}
+			}
+
+			// Then, process keys without retry metadata (new keys)
+			foreach ((string key, string name) in GamesToRedeemInBackground) {
+				if (!GamesToRedeemInBackgroundRetryMetadata.ContainsKey(key)) {
+					return (key, name);
+				}
+			}
+
+			// Finally, return keys with future retry times if nothing else is available
 			foreach ((string key, string name) in GamesToRedeemInBackground) {
 				return (key, name);
 			}
@@ -406,9 +433,34 @@ public sealed class BotDatabase : GenericDatabase {
 			if (!GamesToRedeemInBackground.Remove(key)) {
 				return;
 			}
+
+			// Also remove retry metadata if it exists
+			GamesToRedeemInBackgroundRetryMetadata.Remove(key);
 		}
 
 		Utilities.InBackground(Save);
+	}
+
+	internal void UpdateGameToRedeemRetryMetadata(string key, byte retryCount, DateTime nextRetryTime, DateTime firstAttemptTime) {
+		ArgumentException.ThrowIfNullOrEmpty(key);
+
+		lock (GamesToRedeemInBackground) {
+			if (!GamesToRedeemInBackground.ContainsKey(key)) {
+				return;
+			}
+
+			GamesToRedeemInBackgroundRetryMetadata[key] = new KeyRetryMetadata(retryCount, nextRetryTime, firstAttemptTime);
+		}
+
+		Utilities.InBackground(Save);
+	}
+
+	internal KeyRetryMetadata? GetGameToRedeemRetryMetadata(string key) {
+		ArgumentException.ThrowIfNullOrEmpty(key);
+
+		lock (GamesToRedeemInBackground) {
+			return GamesToRedeemInBackgroundRetryMetadata.TryGetValue(key, out KeyRetryMetadata? metadata) ? metadata : null;
+		}
 	}
 
 	private (bool Valid, string? ErrorMessage) CheckValidation() => GamesToRedeemInBackground.Any(static entry => !IsValidGameToRedeemInBackground(entry.Key, entry.Value)) ? (false, Strings.FormatErrorConfigPropertyInvalid(nameof(GamesToRedeemInBackground), string.Join("", GamesToRedeemInBackground))) : (true, null);
@@ -419,5 +471,28 @@ public sealed class BotDatabase : GenericDatabase {
 		}
 
 		await Save().ConfigureAwait(false);
+	}
+
+	internal sealed class KeyRetryMetadata {
+		[JsonInclude]
+		[JsonRequired]
+		public byte RetryCount { get; set; }
+
+		[JsonInclude]
+		[JsonRequired]
+		public DateTime NextRetryTime { get; set; }
+
+		[JsonInclude]
+		[JsonRequired]
+		public DateTime FirstAttemptTime { get; set; }
+
+		[JsonConstructor]
+		public KeyRetryMetadata() { }
+
+		public KeyRetryMetadata(byte retryCount, DateTime nextRetryTime, DateTime firstAttemptTime) {
+			RetryCount = retryCount;
+			NextRetryTime = nextRetryTime;
+			FirstAttemptTime = firstAttemptTime;
+		}
 	}
 }
