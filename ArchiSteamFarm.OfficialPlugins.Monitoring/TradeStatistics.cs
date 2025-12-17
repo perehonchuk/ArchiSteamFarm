@@ -38,6 +38,11 @@ internal sealed class TradeStatistics {
 	internal int ItemsReceived { get; private set; }
 	internal int RejectedOffers { get; private set; }
 
+	// Trade categorization metrics
+	internal int DonationTrades { get; private set; }
+	internal int FairTrades { get; private set; }
+	internal int UnfairTrades { get; private set; }
+
 	internal void Include(ParseTradeResult result) {
 		ArgumentNullException.ThrowIfNull(result);
 
@@ -46,8 +51,14 @@ internal sealed class TradeStatistics {
 				case ParseTradeResult.EResult.Accepted when result.Confirmed:
 					ConfirmedOffers++;
 
-					ItemsGiven += result.ItemsToGive?.Count ?? 0;
-					ItemsReceived += result.ItemsToReceive?.Count ?? 0;
+					int itemsGivenCount = result.ItemsToGive?.Count ?? 0;
+					int itemsReceivedCount = result.ItemsToReceive?.Count ?? 0;
+
+					ItemsGiven += itemsGivenCount;
+					ItemsReceived += itemsReceivedCount;
+
+					// Categorize the trade based on items exchanged
+					CategorizeTradeOffer(itemsGivenCount, itemsReceivedCount);
 
 					goto case ParseTradeResult.EResult.Accepted;
 				case ParseTradeResult.EResult.Accepted:
@@ -67,6 +78,22 @@ internal sealed class TradeStatistics {
 
 					break;
 			}
+		}
+	}
+
+	private void CategorizeTradeOffer(int itemsGiven, int itemsReceived) {
+		if ((itemsGiven == 0) && (itemsReceived > 0)) {
+			// We received items without giving anything - this is a donation to us
+			DonationTrades++;
+		} else if ((itemsGiven > 0) && (itemsReceived == 0)) {
+			// We gave items without receiving anything - this is a donation from us (unfair)
+			UnfairTrades++;
+		} else if (itemsGiven == itemsReceived) {
+			// Equal number of items exchanged - this is a fair trade
+			FairTrades++;
+		} else {
+			// Unequal exchange - categorize as unfair
+			UnfairTrades++;
 		}
 	}
 }

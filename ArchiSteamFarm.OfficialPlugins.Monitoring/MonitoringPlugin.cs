@@ -316,5 +316,30 @@ internal sealed class MonitoringPlugin : OfficialPlugin, IBot, IBotTradeOfferRes
 			$"{MetricNamePrefix}_bot_items_received", () => TradeStatistics.Select(static kv => new Measurement<int>(kv.Value.ItemsReceived, new KeyValuePair<string, object?>(TagNames.BotName, kv.Key.BotName), new KeyValuePair<string, object?>(TagNames.SteamID, kv.Key.SteamID))),
 			description: "Items received per bot"
 		);
+
+		Meter.CreateObservableCounter(
+			$"{MetricNamePrefix}_bot_trade_categories", () => TradeStatistics.SelectMany<KeyValuePair<Bot, TradeStatistics>, Measurement<int>>(static kv => [
+					new Measurement<int>(
+						kv.Value.DonationTrades,
+						new KeyValuePair<string, object?>(TagNames.BotName, kv.Key.BotName),
+						new KeyValuePair<string, object?>(TagNames.SteamID, kv.Key.SteamID),
+						new KeyValuePair<string, object?>(TagNames.TradeCategory, "donation")
+					),
+					new Measurement<int>(
+						kv.Value.FairTrades,
+						new KeyValuePair<string, object?>(TagNames.BotName, kv.Key.BotName),
+						new KeyValuePair<string, object?>(TagNames.SteamID, kv.Key.SteamID),
+						new KeyValuePair<string, object?>(TagNames.TradeCategory, "fair")
+					),
+					new Measurement<int>(
+						kv.Value.UnfairTrades,
+						new KeyValuePair<string, object?>(TagNames.BotName, kv.Key.BotName),
+						new KeyValuePair<string, object?>(TagNames.SteamID, kv.Key.SteamID),
+						new KeyValuePair<string, object?>(TagNames.TradeCategory, "unfair")
+					)
+				]
+			),
+			description: "Trade offers per bot categorized by trade fairness (donation: received items for free, fair: equal item exchange, unfair: gave more than received)"
+		);
 	}
 }

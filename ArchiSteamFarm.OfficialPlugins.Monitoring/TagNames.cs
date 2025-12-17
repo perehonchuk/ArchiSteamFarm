@@ -32,6 +32,7 @@ internal static class TagNames {
 	internal const string PluginType = "type";
 	internal const string Runtime = "runtime";
 	internal const string SteamID = "steamid";
+	internal const string TradeCategory = "category";
 	internal const string TradeOfferResult = "result";
 	internal const string Variant = "variant";
 	internal const string Version = "version";
