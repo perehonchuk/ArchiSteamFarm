@@ -153,6 +153,8 @@ public sealed class Commands {
 						return await ResponsePause(access, true).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, false).ConfigureAwait(false);
+					case "PAUSE!":
+						return await ResponsePause(access, true, null, null).ConfigureAwait(false);
 					case "POINTS":
 						return await ResponsePointsBalance(access).ConfigureAwait(false);
 					case "RESET":
@@ -282,8 +284,12 @@ public sealed class Commands {
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID: steamID).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), false, steamID: steamID).ConfigureAwait(false);
+					case "PAUSE!" when args.Length > 2:
+						return await ResponsePause(access, args[1], true, null, Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
+					case "PAUSE!":
+						return await ResponsePause(access, true, null, args[1]).ConfigureAwait(false);
 					case "PAUSE&" when args.Length > 2:
-						return await ResponsePause(access, args[1], true, Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
+						return await ResponsePause(access, args[1], true, Utilities.GetArgsAsText(message, 2), null, steamID).ConfigureAwait(false);
 					case "PAUSE&":
 						return await ResponsePause(access, true, args[1]).ConfigureAwait(false);
 					case "PLAY" when args.Length > 2:
@@ -2247,7 +2253,7 @@ public sealed class Commands {
 		return string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Concat(extraResponses));
 	}
 
-	private async Task<string?> ResponsePause(EAccess access, bool permanent, string? resumeInSecondsText = null) {
+	private async Task<string?> ResponsePause(EAccess access, bool permanent, string? resumeInSecondsText = null, string? reason = null) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
@@ -2266,12 +2272,12 @@ public sealed class Commands {
 			return Strings.FormatErrorIsInvalid(nameof(resumeInSecondsText));
 		}
 
-		(bool success, string message) = await Bot.Actions.Pause(permanent, resumeInSeconds).ConfigureAwait(false);
+		(bool success, string message) = await Bot.Actions.Pause(permanent, resumeInSeconds, reason).ConfigureAwait(false);
 
 		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
 	}
 
-	private static async Task<string?> ResponsePause(EAccess access, string botNames, bool permanent, string? resumeInSecondsText = null, ulong steamID = 0) {
+	private static async Task<string?> ResponsePause(EAccess access, string botNames, bool permanent, string? resumeInSecondsText = null, string? reason = null, ulong steamID = 0) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
@@ -2284,7 +2290,7 @@ public sealed class Commands {
 			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
 		}
 
-		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePause(GetProxyAccess(bot, access, steamID), permanent, resumeInSecondsText))).ConfigureAwait(false);
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePause(GetProxyAccess(bot, access, steamID), permanent, resumeInSecondsText, reason))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
@@ -3231,7 +3237,18 @@ public sealed class Commands {
 		}
 
 		if (Bot.CardsFarmer.Paused) {
-			return (FormatBotResponse(Strings.BotStatusPaused), Bot);
+			string statusMessage = Strings.BotStatusPaused;
+
+			if (!string.IsNullOrEmpty(Bot.CardsFarmer.PauseReason)) {
+				statusMessage += $" (Reason: {Bot.CardsFarmer.PauseReason})";
+			}
+
+			if (Bot.CardsFarmer.PausedSince.HasValue) {
+				TimeSpan pausedDuration = DateTime.UtcNow - Bot.CardsFarmer.PausedSince.Value;
+				statusMessage += $" for {pausedDuration.ToHumanReadable()}";
+			}
+
+			return (FormatBotResponse(statusMessage), Bot);
 		}
 
 		if (Bot.IsAccountLimited) {

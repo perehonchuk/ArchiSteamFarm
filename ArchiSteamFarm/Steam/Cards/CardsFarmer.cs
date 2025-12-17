@@ -150,6 +150,18 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	[Required]
 	public bool Paused { get; private set; }
 
+	[JsonInclude]
+	[PublicAPI]
+	public string? PauseReason { get; private set; }
+
+	[JsonInclude]
+	[PublicAPI]
+	public DateTime? PausedSince { get; private set; }
+
+	[JsonInclude]
+	[PublicAPI]
+	public List<PauseHistoryEntry> PauseHistory { get; private set; } = [];
+
 	private TaskCompletionSource<bool>? FarmingResetEvent;
 	private bool ParsingScheduled;
 	private bool PermanentlyPaused;
@@ -267,12 +279,23 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	internal async Task Pause(bool permanent) {
+	internal async Task Pause(bool permanent, string? reason = null) {
 		if (permanent) {
 			PermanentlyPaused = true;
 		}
 
 		Paused = true;
+		PauseReason = reason;
+		PausedSince = DateTime.UtcNow;
+
+		// Add to pause history
+		PauseHistoryEntry historyEntry = new(DateTime.UtcNow, reason, permanent);
+		PauseHistory.Add(historyEntry);
+
+		// Keep only last 50 pause history entries to prevent unbounded growth
+		if (PauseHistory.Count > 50) {
+			PauseHistory.RemoveAt(0);
+		}
 
 		if (!NowFarming) {
 			return;
@@ -293,6 +316,17 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Paused = false;
+		PauseReason = null;
+
+		// Update pause history with resume time
+		if (PauseHistory.Count > 0) {
+			PauseHistoryEntry lastEntry = PauseHistory[^1];
+			if (lastEntry.ResumedAt == null) {
+				lastEntry.ResumedAt = DateTime.UtcNow;
+			}
+		}
+
+		PausedSince = null;
 
 		if (NowFarming) {
 			return true;
@@ -1548,5 +1582,29 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// We must call ToList() here as we can't do in-place replace
 		List<Game> gamesToFarm = orderedGamesToFarm.ToList();
 		GamesToFarm.ReplaceWith(gamesToFarm);
+	}
+
+	[PublicAPI]
+	public sealed class PauseHistoryEntry {
+		[JsonInclude]
+		[JsonRequired]
+		[Required]
+		public DateTime PausedAt { get; private init; }
+
+		[JsonInclude]
+		public DateTime? ResumedAt { get; internal set; }
+
+		[JsonInclude]
+		public string? Reason { get; private init; }
+
+		[JsonInclude]
+		[Required]
+		public bool WasPermanent { get; private init; }
+
+		internal PauseHistoryEntry(DateTime pausedAt, string? reason, bool wasPermanent) {
+			PausedAt = pausedAt;
+			Reason = reason;
+			WasPermanent = wasPermanent;
+		}
 	}
 }
