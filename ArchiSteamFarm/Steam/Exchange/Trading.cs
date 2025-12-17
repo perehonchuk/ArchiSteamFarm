@@ -290,7 +290,16 @@ public sealed class Trading : IDisposable {
 
 			HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets = [];
 
-			IEnumerable<Task<ParseTradeResult>> tasks = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID)).Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
+			// Sort trade offers by priority: prioritize users with high priority boost (from successful past trades),
+			// then smaller trades first (by total item count), then by timestamp
+			List<TradeOffer> sortedTradeOffers = tradeOffers
+				.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID))
+				.OrderByDescending(tradeOffer => Bot.BotDatabase.TradingPriorityBoost.TryGetValue(tradeOffer.OtherSteamID64, out byte priority) ? priority : (byte) 0)
+				.ThenBy(tradeOffer => (tradeOffer.ItemsToGive?.Sum(static item => item.Amount) ?? 0) + (tradeOffer.ItemsToReceive?.Sum(static item => item.Amount) ?? 0))
+				.ThenBy(static tradeOffer => tradeOffer.TradeOfferID)
+				.ToList();
+
+			IEnumerable<Task<ParseTradeResult>> tasks = sortedTradeOffers.Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
 
 			IList<ParseTradeResult> tradeResults = await Utilities.InParallel(tasks).ConfigureAwait(false);
 
@@ -319,6 +328,19 @@ public sealed class Trading : IDisposable {
 
 			if (tradeResults.Count > 0) {
 				await PluginsCore.OnBotTradeOfferResults(Bot, tradeResults as IReadOnlyCollection<ParseTradeResult> ?? tradeResults.ToHashSet()).ConfigureAwait(false);
+			}
+
+			// Update trading priority boost for users with successfully confirmed trades
+			foreach (ParseTradeResult confirmedTrade in tradeResults.Where(static tradeResult => tradeResult is { Result: ParseTradeResult.EResult.Accepted, Confirmed: true })) {
+				ulong otherSteamID = confirmedTrade.TradeOffer?.OtherSteamID64 ?? 0;
+
+				if (otherSteamID != 0) {
+					byte currentPriority = Bot.BotDatabase.TradingPriorityBoost.GetValueOrDefault(otherSteamID);
+
+					if (currentPriority < byte.MaxValue) {
+						Bot.BotDatabase.TradingPriorityBoost[otherSteamID] = (byte) (currentPriority + 1);
+					}
+				}
 			}
 
 			if (!lootableTypesReceived && tradeResults.Any(tradeResult => tradeResult is { Result: ParseTradeResult.EResult.Accepted, Confirmed: true } && (tradeResult.ItemsToReceive?.Any(receivedItem => Bot.BotConfig.LootableTypes.Contains(receivedItem.Type)) == true))) {

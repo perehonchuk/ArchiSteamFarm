@@ -192,6 +192,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	internal ObservableConcurrentDictionary<ulong, byte> TradingPriorityBoost { get; private init; } = new();
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
 	private BotDatabase(string filePath) : this() {
@@ -209,6 +214,7 @@ public sealed class BotDatabase : GenericDatabase {
 		FarmingRiskyPrioritizedAppIDs.OnModified += OnObjectModified;
 		MatchActivelyBlacklistAppIDs.OnModified += OnObjectModified;
 		TradingBlacklistSteamIDs.OnModified += OnObjectModified;
+		TradingPriorityBoost.OnModified += OnObjectModified;
 	}
 
 	[PublicAPI]
@@ -282,6 +288,9 @@ public sealed class BotDatabase : GenericDatabase {
 	[UsedImplicitly]
 	public bool ShouldSerializeTradingBlacklistSteamIDs() => TradingBlacklistSteamIDs.Count > 0;
 
+	[UsedImplicitly]
+	public bool ShouldSerializeTradingPriorityBoost() => !TradingPriorityBoost.IsEmpty;
+
 	protected override void Dispose(bool disposing) {
 		if (disposing) {
 			// Events we registered
@@ -292,6 +301,7 @@ public sealed class BotDatabase : GenericDatabase {
 			FarmingRiskyPrioritizedAppIDs.OnModified -= OnObjectModified;
 			MatchActivelyBlacklistAppIDs.OnModified -= OnObjectModified;
 			TradingBlacklistSteamIDs.OnModified -= OnObjectModified;
+			TradingPriorityBoost.OnModified -= OnObjectModified;
 
 			// Those are objects that might be null and the check should be in-place
 			MobileAuthenticator?.Dispose();
