@@ -192,7 +192,7 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
-	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+	private OrderedDictionary<string, GameToRedeem> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
 	private BotDatabase(string filePath) : this() {
 		ArgumentException.ThrowIfNullOrEmpty(filePath);
@@ -303,18 +303,25 @@ public sealed class BotDatabase : GenericDatabase {
 
 	protected override Task Save() => Save(this);
 
-	internal void AddGamesToRedeemInBackground(IReadOnlyDictionary<string, string> games) {
+	internal void AddGamesToRedeemInBackground(IReadOnlyDictionary<string, GameToRedeem> games) {
 		if ((games == null) || (games.Count == 0)) {
 			throw new ArgumentNullException(nameof(games));
 		}
 
 		lock (GamesToRedeemInBackground) {
-			foreach ((string key, string name) in games) {
-				if (!IsValidGameToRedeemInBackground(key, name)) {
+			List<(string Key, GameToRedeem Game)> gamesToAdd = [];
+
+			foreach ((string key, GameToRedeem game) in games) {
+				if (!IsValidGameToRedeemInBackground(key, game.Name)) {
 					throw new InvalidOperationException(nameof(IsValidGameToRedeemInBackground));
 				}
 
-				GamesToRedeemInBackground[key] = name;
+				gamesToAdd.Add((key, game));
+			}
+
+			// Sort by priority (descending) and add to dictionary
+			foreach ((string key, GameToRedeem game) in gamesToAdd.OrderByDescending(static x => x.Game.Priority)) {
+				GamesToRedeemInBackground[key] = game;
 			}
 		}
 
@@ -379,14 +386,25 @@ public sealed class BotDatabase : GenericDatabase {
 		return botDatabase;
 	}
 
-	internal (string? Key, string? Name) GetGameToRedeemInBackground() {
+	internal (string? Key, string? Name, byte Priority) GetGameToRedeemInBackground() {
 		lock (GamesToRedeemInBackground) {
-			foreach ((string key, string name) in GamesToRedeemInBackground) {
-				return (key, name);
+			// Prioritize highest priority first
+			GameToRedeem? highestPriority = null;
+			string? highestPriorityKey = null;
+
+			foreach ((string key, GameToRedeem game) in GamesToRedeemInBackground) {
+				if ((highestPriority == null) || (game.Priority > highestPriority.Priority)) {
+					highestPriority = game;
+					highestPriorityKey = key;
+				}
+			}
+
+			if (highestPriorityKey != null) {
+				return (highestPriorityKey, highestPriority!.Name, highestPriority.Priority);
 			}
 		}
 
-		return (null, null);
+		return (null, null, 0);
 	}
 
 	internal static bool IsValidGameToRedeemInBackground(string key, string name) => !string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(name) && Utilities.IsValidCdKey(key);
@@ -411,7 +429,7 @@ public sealed class BotDatabase : GenericDatabase {
 		Utilities.InBackground(Save);
 	}
 
-	private (bool Valid, string? ErrorMessage) CheckValidation() => GamesToRedeemInBackground.Any(static entry => !IsValidGameToRedeemInBackground(entry.Key, entry.Value)) ? (false, Strings.FormatErrorConfigPropertyInvalid(nameof(GamesToRedeemInBackground), string.Join("", GamesToRedeemInBackground))) : (true, null);
+	private (bool Valid, string? ErrorMessage) CheckValidation() => GamesToRedeemInBackground.Any(static entry => !IsValidGameToRedeemInBackground(entry.Key, entry.Value.Name)) ? (false, Strings.FormatErrorConfigPropertyInvalid(nameof(GamesToRedeemInBackground), string.Join("", GamesToRedeemInBackground))) : (true, null);
 
 	private async void OnObjectModified(object? sender, EventArgs e) {
 		if (string.IsNullOrEmpty(FilePath)) {

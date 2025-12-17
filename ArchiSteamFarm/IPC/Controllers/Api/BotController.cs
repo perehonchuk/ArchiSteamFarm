@@ -226,7 +226,7 @@ public sealed class BotController : ArchiController {
 
 	[EndpointSummary("Adds keys to redeem using BGR to given bot")]
 	[HttpPost("{botNames:required}/GamesToRedeemInBackground")]
-	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, OrderedDictionary<string, string>>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, OrderedDictionary<string, GameToRedeem>>>>((int) HttpStatusCode.OK)]
 	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> GamesToRedeemInBackgroundPost(string botNames, [FromBody] BotGamesToRedeemInBackgroundRequest request) {
 		ArgumentException.ThrowIfNullOrEmpty(botNames);
@@ -250,13 +250,13 @@ public sealed class BotController : ArchiController {
 
 		await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.AddGamesToRedeemInBackground(request.GamesToRedeemInBackground)))).ConfigureAwait(false);
 
-		Dictionary<string, OrderedDictionary<string, string>> result = new(bots.Count, Bot.BotsComparer);
+		Dictionary<string, OrderedDictionary<string, GameToRedeem>> result = new(bots.Count, Bot.BotsComparer);
 
 		foreach (Bot bot in bots) {
 			result[bot.BotName] = request.GamesToRedeemInBackground;
 		}
 
-		return Ok(new GenericResponse<IReadOnlyDictionary<string, OrderedDictionary<string, string>>>(result));
+		return Ok(new GenericResponse<IReadOnlyDictionary<string, OrderedDictionary<string, GameToRedeem>>>(result));
 	}
 
 	[EndpointSummary("Provides input value to given bot for next usage")]

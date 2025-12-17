@@ -22,24 +22,29 @@
 // limitations under the License.
 
 using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.ComponentModel.DataAnnotations;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
-using ArchiSteamFarm.Steam.Data;
+using JetBrains.Annotations;
 
-namespace ArchiSteamFarm.IPC.Requests;
+namespace ArchiSteamFarm.Steam.Data;
 
-[SuppressMessage("ReSharper", "ClassCannotBeInstantiated")]
-public sealed class BotGamesToRedeemInBackgroundRequest {
-	[Description("A map of cd-key to GameToRedeem object. Key in the map must be a valid and unique Steam cd-key. Value contains the game name and optional priority (0-255, higher = redeemed first)")]
+[PublicAPI]
+public sealed class GameToRedeem {
 	[JsonInclude]
-	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	[JsonPropertyName("name")]
 	[JsonRequired]
-	[Required]
-	public OrderedDictionary<string, GameToRedeem> GamesToRedeemInBackground { get; private init; } = new(StringComparer.OrdinalIgnoreCase);
+	public string Name { get; private init; } = "";
+
+	[JsonInclude]
+	[JsonPropertyName("priority")]
+	public byte Priority { get; private init; }
 
 	[JsonConstructor]
-	private BotGamesToRedeemInBackgroundRequest() { }
+	public GameToRedeem(string name, byte priority = 0) {
+		ArgumentException.ThrowIfNullOrEmpty(name);
+
+		Name = name;
+		Priority = priority;
+	}
+
+	public GameToRedeem(string name) : this(name, 0) { }
 }

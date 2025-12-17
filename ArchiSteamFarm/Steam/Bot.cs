@@ -1018,7 +1018,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		return true;
 	}
 
-	internal void AddGamesToRedeemInBackground(IReadOnlyDictionary<string, string> gamesToRedeemInBackground) {
+	internal void AddGamesToRedeemInBackground(IReadOnlyDictionary<string, GameToRedeem> gamesToRedeemInBackground) {
 		if ((gamesToRedeemInBackground == null) || (gamesToRedeemInBackground.Count == 0)) {
 			throw new ArgumentNullException(nameof(gamesToRedeemInBackground));
 		}
@@ -1091,12 +1091,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		return true;
 	}
 
-	internal static void FilterGamesToRedeemInBackground(IDictionary<string, string> gamesToRedeemInBackground) {
+	internal static void FilterGamesToRedeemInBackground(IDictionary<string, GameToRedeem> gamesToRedeemInBackground) {
 		if ((gamesToRedeemInBackground == null) || (gamesToRedeemInBackground.Count == 0)) {
 			throw new ArgumentNullException(nameof(gamesToRedeemInBackground));
 		}
 
-		HashSet<string> invalidKeys = gamesToRedeemInBackground.Where(static entry => !BotDatabase.IsValidGameToRedeemInBackground(entry.Key, entry.Value)).Select(static game => game.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		HashSet<string> invalidKeys = gamesToRedeemInBackground.Where(static entry => !BotDatabase.IsValidGameToRedeemInBackground(entry.Key, entry.Value.Name)).Select(static game => game.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
 		foreach (string invalidKey in invalidKeys) {
 			gamesToRedeemInBackground.Remove(invalidKey);
@@ -1471,7 +1471,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		try {
-			OrderedDictionary<string, string> gamesToRedeemInBackground = new(StringComparer.OrdinalIgnoreCase);
+			OrderedDictionary<string, GameToRedeem> gamesToRedeemInBackground = new(StringComparer.OrdinalIgnoreCase);
 
 			using (StreamReader reader = new(filePath)) {
 				while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line) {
@@ -1482,6 +1482,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					// Valid formats:
 					// Key (name will be the same as key and replaced from redemption result, if possible)
 					// Name + Key (user provides both, if name is equal to key, above logic is used, otherwise name is kept)
+					// Name + Priority + Key (name, numeric priority 0-255, and key)
 					// Name + <Ignored> + Key (BGR output format, we include extra properties in the middle, those are ignored during import)
 					string[] parsedArgs = line.Split(DefaultBackgroundKeysRedeemerSeparator, StringSplitOptions.RemoveEmptyEntries);
 
@@ -1493,8 +1494,14 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 					string name = parsedArgs[0];
 					string key = parsedArgs[^1];
+					byte priority = 0;
 
-					gamesToRedeemInBackground[key] = name;
+					// Check if second-to-last arg is a priority number (when there are 3+ args)
+					if ((parsedArgs.Length >= 3) && byte.TryParse(parsedArgs[^2], out byte parsedPriority)) {
+						priority = parsedPriority;
+					}
+
+					gamesToRedeemInBackground[key] = new GameToRedeem(name, priority);
 				}
 			}
 
@@ -3628,11 +3635,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			bool assumeWalletKeyOnBadActivationCode = BotConfig.RedeemingPreferences.HasFlag(BotConfig.ERedeemingPreferences.AssumeWalletKeyOnBadActivationCode);
 
 			while (IsConnectedAndLoggedOn && BotDatabase.HasGamesToRedeemInBackground) {
-				(string? key, string? name) = BotDatabase.GetGameToRedeemInBackground();
+				(string? key, string? name, byte priority) = BotDatabase.GetGameToRedeemInBackground();
 
 				if (string.IsNullOrEmpty(key)) {
 					// No more games to redeem left, possible due to e.g. queue purge
 					break;
+				}
+
+				if (priority > 0) {
+					ArchiLogger.LogGenericInfo($"Redeeming priority {priority} key: {key}");
 				}
 
 				CStore_RegisterCDKey_Response? response = await Actions.RedeemKey(key).ConfigureAwait(false);
