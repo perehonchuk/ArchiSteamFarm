@@ -331,6 +331,9 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 				return;
 			}
 
+			// Record farming activity
+			Bot.RecordBotActivity();
+
 			bool? isAnythingToFarm = await IsAnythingToFarm().ConfigureAwait(false);
 
 			if (!isAnythingToFarm.HasValue) {

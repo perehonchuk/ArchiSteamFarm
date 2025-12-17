@@ -375,6 +375,9 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(message);
 
+		// Record activity when receiving messages
+		Bot.RecordBotActivity();
+
 		string? commandPrefix = ASF.GlobalConfig != null ? ASF.GlobalConfig.CommandPrefix : GlobalConfig.DefaultCommandPrefix;
 
 		if (!string.IsNullOrEmpty(commandPrefix)) {

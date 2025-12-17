@@ -173,6 +173,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private readonly SemaphoreSlim ConnectionSemaphore = new(1, 1);
 	private readonly SemaphoreSlim GamesRedeemerInBackgroundSemaphore = new(1, 1);
 	private readonly Timer HeartBeatTimer;
+	private readonly Timer IdleActivityTimer;
 	private readonly SemaphoreSlim InitializationSemaphore = new(1, 1);
 	private readonly SemaphoreSlim MessagingSemaphore = new(1, 1);
 	private readonly ConcurrentDictionary<UserNotificationsCallback.EUserNotification, uint> PastNotifications = new();
@@ -297,6 +298,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private Timer? ConnectionFailureTimer;
 	private bool FirstTradeSent;
 	private Timer? GamesRedeemerInBackgroundTimer;
+	private DateTime LastActivityTime;
+	private bool PendingIdleShutdown;
 	private string? IPCountryCode;
 	private EResult LastLogOnResult;
 	private DateTime LastLogonSessionReplaced;
@@ -405,6 +408,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(ASF.LoadBalancingDelay * Bots?.Count ?? 0), // Delay
 			TimeSpan.FromMinutes(1) // Period
 		);
+
+		IdleActivityTimer = new Timer(
+			CheckIdleActivity,
+			null,
+			TimeSpan.FromMinutes(5), // Delay
+			TimeSpan.FromMinutes(5) // Period
+		);
+
+		LastActivityTime = DateTime.UtcNow;
 	}
 
 	public void Dispose() {
@@ -413,6 +425,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		Actions.Dispose();
 		CardsFarmer.Dispose();
 		HeartBeatTimer.Dispose();
+		IdleActivityTimer.Dispose();
 
 		// Those are objects that might be null and the check should be in-place
 		CallbacksAborted?.Cancel();
@@ -431,6 +444,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await Actions.DisposeAsync().ConfigureAwait(false);
 		await CardsFarmer.DisposeAsync().ConfigureAwait(false);
 		await HeartBeatTimer.DisposeAsync().ConfigureAwait(false);
+		await IdleActivityTimer.DisposeAsync().ConfigureAwait(false);
 
 		// Those are objects that might be null and the check should be in-place
 		if (CallbacksAborted != null) {
@@ -1931,7 +1945,18 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				return;
 			}
 
+			// Pre-start validation phase
+			ArchiLogger.LogGenericInfo("Validating bot startup conditions...");
+
+			if (!await ValidateStartupConditions().ConfigureAwait(false)) {
+				ArchiLogger.LogGenericWarning("Bot startup validation failed. Start aborted.");
+
+				return;
+			}
+
 			KeepRunning = true;
+			LastActivityTime = DateTime.UtcNow;
+			PendingIdleShutdown = false;
 
 			ArchiLogger.LogGenericInfo(Strings.Starting);
 
@@ -2346,6 +2371,63 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				break;
 		}
+	}
+
+	private async void CheckIdleActivity(object? state = null) {
+		if (!KeepRunning || !IsConnectedAndLoggedOn) {
+			return;
+		}
+
+		TimeSpan idleTime = DateTime.UtcNow - LastActivityTime;
+		TimeSpan idleThreshold = TimeSpan.FromMinutes(30);
+
+		if (idleTime > idleThreshold) {
+			if (!PendingIdleShutdown) {
+				PendingIdleShutdown = true;
+				ArchiLogger.LogGenericWarning($"Bot has been idle for {idleTime.TotalMinutes:F0} minutes. Scheduling automatic shutdown.");
+
+				await Task.Delay(TimeSpan.FromMinutes(5)).ConfigureAwait(false);
+
+				if (PendingIdleShutdown && KeepRunning) {
+					ArchiLogger.LogGenericInfo("Executing automatic shutdown due to inactivity.");
+					await Stop().ConfigureAwait(false);
+				}
+			}
+		} else {
+			PendingIdleShutdown = false;
+		}
+	}
+
+	internal void RecordBotActivity() {
+		LastActivityTime = DateTime.UtcNow;
+		PendingIdleShutdown = false;
+	}
+
+	private async Task<bool> ValidateStartupConditions() {
+		// Check if bot has required credentials
+		if (string.IsNullOrEmpty(BotConfig.SteamLogin)) {
+			ArchiLogger.LogGenericError("SteamLogin is not configured.");
+
+			return false;
+		}
+
+		// Check if we're rate-limited from recent connection failures
+		if ((LastLogOnResult == EResult.RateLimitExceeded) && (DateTime.UtcNow - LastLogonSessionReplaced < TimeSpan.FromMinutes(5))) {
+			ArchiLogger.LogGenericWarning("Bot is currently rate-limited. Waiting before startup.");
+
+			await Task.Delay(TimeSpan.FromMinutes(5) - (DateTime.UtcNow - LastLogonSessionReplaced)).ConfigureAwait(false);
+		}
+
+		// Perform plugin-based validation
+		bool pluginValidation = await PluginsCore.OnBotStartupValidation(this).ConfigureAwait(false);
+
+		if (!pluginValidation) {
+			return false;
+		}
+
+		ArchiLogger.LogGenericInfo("Startup validation completed successfully.");
+
+		return true;
 	}
 
 	private async void HeartBeat(object? state = null) {
