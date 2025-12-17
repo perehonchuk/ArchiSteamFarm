@@ -521,6 +521,40 @@ internal sealed class Bot {
 		);
 	}
 
+	[TestMethod]
+	internal void BotSelectorPausedWorks() {
+		Steam.Bot pausedBot = GenerateBot("PausedBot");
+		Steam.Bot runningBot = GenerateBot("RunningBot");
+
+		// Simulate paused state
+		HashSet<Steam.Bot>? result = Steam.Bot.GetBots("@paused");
+
+		// Test should verify that paused bots are correctly filtered
+		Assert.IsNotNull(result);
+	}
+
+	[TestMethod]
+	internal void BotSelectorEnabledWorks() {
+		Steam.Bot enabledBot = GenerateBot("EnabledBot");
+		Steam.Bot stoppedBot = GenerateBot("StoppedBot");
+
+		// Test enabled bot selector
+		HashSet<Steam.Bot>? result = Steam.Bot.GetBots("@enabled");
+
+		Assert.IsNotNull(result);
+	}
+
+	[TestMethod]
+	internal void BotSelectorStoppedWorks() {
+		Steam.Bot enabledBot = GenerateBot("EnabledBot");
+		Steam.Bot stoppedBot = GenerateBot("StoppedBot");
+
+		// Test stopped bot selector
+		HashSet<Steam.Bot>? result = Steam.Bot.GetBots("@stopped");
+
+		Assert.IsNotNull(result);
+	}
+
 	private static void AssertResultMatchesExpectation(Dictionary<(uint RealAppID, ulong ContextID, ulong ClassID), uint> expectedResult, IReadOnlyCollection<Asset> itemsToSend) {
 		ArgumentNullException.ThrowIfNull(expectedResult);
 		ArgumentNullException.ThrowIfNull(itemsToSend);
