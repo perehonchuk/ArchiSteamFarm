@@ -153,6 +153,8 @@ public sealed class Commands {
 						return await ResponsePause(access, true).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, false).ConfigureAwait(false);
+					case "PAUSECANCEL":
+						return ResponsePauseCancel(access);
 					case "POINTS":
 						return await ResponsePointsBalance(access).ConfigureAwait(false);
 					case "RESET":
@@ -286,6 +288,8 @@ public sealed class Commands {
 						return await ResponsePause(access, args[1], true, Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 					case "PAUSE&":
 						return await ResponsePause(access, true, args[1]).ConfigureAwait(false);
+					case "PAUSECANCEL":
+						return await ResponsePauseCancel(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "PLAY" when args.Length > 2:
 						return await ResponsePlay(access, args[1], Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 					case "PLAY":
@@ -3158,6 +3162,40 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseResume(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private string? ResponsePauseCancel(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Operator) {
+			return null;
+		}
+
+		(bool success, string message) = Bot.Actions.CancelQueuedPause();
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static async Task<string?> ResponsePauseCancel(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponsePauseCancel(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

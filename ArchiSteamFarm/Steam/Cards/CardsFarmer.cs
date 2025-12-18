@@ -150,9 +150,16 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	[Required]
 	public bool Paused { get; private set; }
 
+	[JsonInclude]
+	[JsonRequired]
+	[PublicAPI]
+	[Required]
+	public bool PauseQueued { get; private set; }
+
 	private TaskCompletionSource<bool>? FarmingResetEvent;
 	private bool ParsingScheduled;
 	private bool PermanentlyPaused;
+	private bool PermanentPauseQueued;
 	private bool ShouldResumeFarming;
 	private bool ShouldSkipNewGamesIfPossible;
 
@@ -268,11 +275,38 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	}
 
 	internal async Task Pause(bool permanent) {
+		// First, queue the pause request
+		if (permanent) {
+			PermanentPauseQueued = true;
+		}
+
+		PauseQueued = true;
+
+		// If we're already paused, just update the permanent status
+		if (Paused) {
+			if (permanent) {
+				PermanentlyPaused = true;
+			}
+
+			return;
+		}
+
+		// Wait for current game cycle to complete before actually pausing
+		if (NowFarming && (CurrentGamesFarming.Count > 0)) {
+			Bot.ArchiLogger.LogGenericInfo($"Pause request queued. Will pause after current game cycle completes.");
+
+			// The actual pause will be applied in Farm() method when it checks PauseQueued
+			return;
+		}
+
+		// If not actively farming, apply pause immediately
 		if (permanent) {
 			PermanentlyPaused = true;
 		}
 
 		Paused = true;
+		PauseQueued = false;
+		PermanentPauseQueued = false;
 
 		if (!NowFarming) {
 			return;
@@ -282,6 +316,18 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	}
 
 	internal async Task<bool> Resume(bool userAction) {
+		// Clear any queued pause requests
+		if (PauseQueued) {
+			PauseQueued = false;
+			PermanentPauseQueued = false;
+
+			if (!Paused) {
+				Bot.ArchiLogger.LogGenericInfo("Queued pause request cancelled.");
+
+				return true;
+			}
+		}
+
 		if (PermanentlyPaused) {
 			if (!userAction) {
 				Bot.ArchiLogger.LogGenericInfo(Strings.IgnoredPermanentPauseEnabled);
@@ -307,8 +353,20 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		return true;
 	}
 
+	internal bool CancelQueuedPause() {
+		if (!PauseQueued) {
+			return false;
+		}
+
+		PauseQueued = false;
+		PermanentPauseQueued = false;
+
+		return true;
+	}
+
 	internal void SetInitialState(bool paused) {
 		PermanentlyPaused = Paused = paused;
+		PauseQueued = PermanentPauseQueued = false;
 		ShouldResumeFarming = ShouldSkipNewGamesIfPossible = false;
 	}
 
@@ -787,6 +845,24 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Complex"));
 
 				while (GamesToFarm.Count > 0) {
+					// Check if pause was queued
+					if (PauseQueued) {
+						if (PermanentPauseQueued) {
+							PermanentlyPaused = true;
+						}
+
+						Paused = true;
+						PauseQueued = false;
+						PermanentPauseQueued = false;
+
+						Bot.ArchiLogger.LogGenericInfo("Applying queued pause request after game cycle completion.");
+
+						await StopFarming().ConfigureAwait(false);
+
+						return;
+					}
+
+
 					// Initially we're going to farm games that passed our HoursUntilCardDrops
 					// This block is almost identical to Simple algorithm, we just copy appropriate items from GamesToFarm into innerGamesToFarm
 					HashSet<Game> innerGamesToFarm = GamesToFarm.Where(game => game.HoursPlayed >= Bot.BotConfig.HoursUntilCardDrops).ToHashSet();
@@ -854,6 +930,23 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Simple"));
 
 				while (GamesToFarm.Count > 0) {
+					// Check if pause was queued
+					if (PauseQueued) {
+						if (PermanentPauseQueued) {
+							PermanentlyPaused = true;
+						}
+
+						Paused = true;
+						PauseQueued = false;
+						PermanentPauseQueued = false;
+
+						Bot.ArchiLogger.LogGenericInfo("Applying queued pause request after game cycle completion.");
+
+						await StopFarming().ConfigureAwait(false);
+
+						return;
+					}
+
 					// In simple algorithm we're going to farm anything that is playable, regardless of hours
 					Game game = GamesToFarm.First();
 

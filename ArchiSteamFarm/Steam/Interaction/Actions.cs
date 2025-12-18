@@ -415,6 +415,17 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public (bool Success, string Message) CancelQueuedPause() {
+		if (!Bot.CardsFarmer.PauseQueued) {
+			return (false, "No pause request is currently queued.");
+		}
+
+		bool cancelled = Bot.CardsFarmer.CancelQueuedPause();
+
+		return (cancelled, cancelled ? "Queued pause request has been cancelled." : "Failed to cancel queued pause request.");
+	}
+
+	[PublicAPI]
 	public async Task<(bool Success, string Message)> SendInventory(IReadOnlyCollection<Asset> items, ulong targetSteamID = 0, string? tradeToken = null, string? customMessage = null, ushort itemsPerTrade = Trading.MaxItemsPerTrade) {
 		if ((items == null) || (items.Count == 0)) {
 			throw new ArgumentNullException(nameof(items));
