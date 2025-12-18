@@ -106,6 +106,9 @@ public sealed class GlobalConfig {
 	public const byte DefaultMinFarmingDelayAfterBlock = 60;
 
 	[PublicAPI]
+	public const ushort DefaultTradeOfferEvaluationDelay = 300;
+
+	[PublicAPI]
 	public const EOptimizationMode DefaultOptimizationMode = EOptimizationMode.MaxPerformance;
 
 	[PublicAPI]
@@ -288,6 +291,10 @@ public sealed class GlobalConfig {
 	public byte MinFarmingDelayAfterBlock { get; init; } = DefaultMinFarmingDelayAfterBlock;
 
 	[JsonInclude]
+	[Range(ushort.MinValue, ushort.MaxValue)]
+	public ushort TradeOfferEvaluationDelay { get; init; } = DefaultTradeOfferEvaluationDelay;
+
+	[JsonInclude]
 	public EOptimizationMode OptimizationMode { get; init; } = DefaultOptimizationMode;
 
 	[JsonDisallowNull]
@@ -437,6 +444,9 @@ public sealed class GlobalConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeOptimizationMode() => !Saving || (OptimizationMode != DefaultOptimizationMode);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeTradeOfferEvaluationDelay() => !Saving || (TradeOfferEvaluationDelay != DefaultTradeOfferEvaluationDelay);
 
 	[UsedImplicitly]
 	public bool ShouldSerializePluginsUpdateList() => !Saving || ((PluginsUpdateList != DefaultPluginsUpdateList) && !PluginsUpdateList.SetEquals(DefaultPluginsUpdateList));

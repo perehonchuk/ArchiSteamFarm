@@ -46,6 +46,7 @@ public sealed class Trading : IDisposable {
 
 	private readonly Bot Bot;
 	private readonly ConcurrentHashSet<ulong> HandledTradeOfferIDs = [];
+	private readonly ConcurrentDictionary<ulong, DateTime> PendingTradeEvaluations = [];
 	private readonly SemaphoreSlim TradesSemaphore = new(1, 1);
 
 	private bool ParsingScheduled;
@@ -288,6 +289,17 @@ public sealed class Trading : IDisposable {
 				HandledTradeOfferIDs.IntersectWith(tradeOffers.Select(static tradeOffer => tradeOffer.TradeOfferID));
 			}
 
+			// Clean up pending evaluations for trades that are no longer active
+			if (PendingTradeEvaluations.Count > 0) {
+				HashSet<ulong> activeTradeIDs = tradeOffers.Select(static tradeOffer => tradeOffer.TradeOfferID).ToHashSet();
+
+				foreach (ulong pendingTradeID in PendingTradeEvaluations.Keys.ToList()) {
+					if (!activeTradeIDs.Contains(pendingTradeID)) {
+						PendingTradeEvaluations.TryRemove(pendingTradeID, out _);
+					}
+				}
+			}
+
 			HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets = [];
 
 			IEnumerable<Task<ParseTradeResult>> tasks = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID)).Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
@@ -430,8 +442,10 @@ public sealed class Trading : IDisposable {
 				return ParseTradeResult.EResult.Blacklisted;
 			}
 
-			// Always accept trades from SteamMasterID
+			// Always accept trades from SteamMasterID (bypass evaluation queue)
 			if (Bot.GetAccess(tradeOffer.OtherSteamID64) >= EAccess.Master) {
+				// Master trades bypass evaluation period, clean up queue if present
+				PendingTradeEvaluations.TryRemove(tradeOffer.TradeOfferID, out _);
 				Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Accepted, $"{nameof(tradeOffer.OtherSteamID64)} {tradeOffer.OtherSteamID64}: {BotConfig.EAccess.Master}"));
 
 				return ParseTradeResult.EResult.Accepted;
@@ -466,13 +480,15 @@ public sealed class Trading : IDisposable {
 
 				switch (acceptDonations) {
 					case true when acceptBotTrades:
-						// If we accept donations and bot trades, accept it right away
+						// If we accept donations and bot trades, accept it right away (bypass evaluation queue for donations)
+						PendingTradeEvaluations.TryRemove(tradeOffer.TradeOfferID, out _);
 						Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Accepted, $"{nameof(acceptDonations)} = {true} && {nameof(acceptBotTrades)} = {true}"));
 
 						return ParseTradeResult.EResult.Accepted;
 
 					case false when !acceptBotTrades:
 						// If we don't accept donations, neither bot trades, deny it right away
+						PendingTradeEvaluations.TryRemove(tradeOffer.TradeOfferID, out _);
 						Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Rejected, $"{nameof(acceptDonations)} = {false} && {nameof(acceptBotTrades)} = {false}"));
 
 						return ParseTradeResult.EResult.Rejected;
@@ -482,6 +498,11 @@ public sealed class Trading : IDisposable {
 				bool isBotTrade = (tradeOffer.OtherSteamID64 != 0) && Bot.Bots.Values.Any(bot => bot.SteamID == tradeOffer.OtherSteamID64);
 
 				ParseTradeResult.EResult result = (acceptDonations && !isBotTrade) || (acceptBotTrades && isBotTrade) ? ParseTradeResult.EResult.Accepted : ParseTradeResult.EResult.Rejected;
+
+				// Clean up evaluation queue for donation trades
+				if (result == ParseTradeResult.EResult.Accepted) {
+					PendingTradeEvaluations.TryRemove(tradeOffer.TradeOfferID, out _);
+				}
 
 				Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, result, $"{nameof(acceptDonations)} = {acceptDonations} && {nameof(acceptBotTrades)} = {acceptBotTrades} && {nameof(isBotTrade)} = {isBotTrade}"));
 
@@ -572,6 +593,30 @@ public sealed class Trading : IDisposable {
 		ParseTradeResult.EResult acceptResult;
 
 		if (accept) {
+			// Check if trade needs evaluation period
+			ushort evaluationDelay = ASF.GlobalConfig?.TradeOfferEvaluationDelay ?? GlobalConfig.DefaultTradeOfferEvaluationDelay;
+
+			if (!PendingTradeEvaluations.TryGetValue(tradeOffer.TradeOfferID, out DateTime firstSeenTime)) {
+				// First time seeing this trade, add it to pending evaluation queue
+				PendingTradeEvaluations[tradeOffer.TradeOfferID] = DateTime.UtcNow;
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.TryAgain, $"Queued for evaluation (delay: {evaluationDelay}s)"));
+
+				return ParseTradeResult.EResult.TryAgain;
+			}
+
+			// Check if evaluation period has passed
+			TimeSpan timeSinceFirstSeen = DateTime.UtcNow - firstSeenTime;
+
+			if (timeSinceFirstSeen.TotalSeconds < evaluationDelay) {
+				// Still in evaluation period, retry later
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.TryAgain, $"Evaluation pending ({(int) timeSinceFirstSeen.TotalSeconds}/{evaluationDelay}s)"));
+
+				return ParseTradeResult.EResult.TryAgain;
+			}
+
+			// Evaluation period passed, remove from queue and proceed with acceptance
+			PendingTradeEvaluations.TryRemove(tradeOffer.TradeOfferID, out _);
+
 			// Ensure that accepting this trade offer does not create conflicts with other
 			lock (handledSets) {
 				if (handledSets.Overlaps(wantedSets)) {
@@ -585,6 +630,8 @@ public sealed class Trading : IDisposable {
 
 			acceptResult = ParseTradeResult.EResult.Accepted;
 		} else {
+			// Trade rejected, clean up any pending evaluation
+			PendingTradeEvaluations.TryRemove(tradeOffer.TradeOfferID, out _);
 			acceptResult = ParseTradeResult.EResult.Rejected;
 		}
 
