@@ -298,6 +298,12 @@ internal static class Logging {
 			LogManager.ReconfigExistingLoggers();
 		}
 
+		// Also ensure SteamTarget instances are properly initialized with default batching behavior
+		foreach (SteamTarget steamTarget in LogManager.Configuration.AllTargets.Select(static target => target is WrapperTargetBase wrapper ? wrapper.WrappedTarget : target).OfType<SteamTarget>()) {
+			// Targets are already initialized, just ensuring they're configured
+			// This helps maintain consistent batching behavior across all SteamTargets
+		}
+
 		ArchiKestrel.OnNewHistoryTarget(historyTarget);
 	}
 

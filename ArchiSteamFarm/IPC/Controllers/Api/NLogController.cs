@@ -41,6 +41,8 @@ using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Hosting;
+using NLog;
+using NLog.Targets.Wrappers;
 
 namespace ArchiSteamFarm.IPC.Controllers.Api;
 
@@ -151,6 +153,33 @@ public sealed class NLogController : ArchiController {
 		}
 
 		return new EmptyResult();
+	}
+
+	[EndpointSummary("Gets information about configured NLog targets including SteamTarget batching configuration")]
+	[HttpGet("Targets")]
+	[ProducesResponseType<GenericResponse<Dictionary<string, object>>>((int) HttpStatusCode.OK)]
+	public ActionResult<GenericResponse> TargetsGet() {
+		Dictionary<string, object> targetsInfo = new();
+
+		if (LogManager.Configuration != null) {
+			IEnumerable<SteamTarget> steamTargets = LogManager.Configuration.AllTargets
+				.Select(static target => target is WrapperTargetBase wrapper ? wrapper.WrappedTarget : target)
+				.OfType<SteamTarget>();
+
+			int steamTargetIndex = 0;
+
+			foreach (SteamTarget steamTarget in steamTargets) {
+				targetsInfo[$"SteamTarget_{steamTargetIndex++}"] = new {
+					steamTarget.Name,
+					steamTarget.BatchSize,
+					steamTarget.FlushTimeoutSeconds,
+					SteamID = steamTarget.SteamID.ToString(),
+					ChatGroupID = steamTarget.ChatGroupID.ToString()
+				};
+			}
+		}
+
+		return Ok(new GenericResponse<Dictionary<string, object>>(targetsInfo));
 	}
 
 	internal static async void OnNewHistoryEntry(object? sender, HistoryTarget.NewHistoryEntryArgs newHistoryEntryArgs) {
