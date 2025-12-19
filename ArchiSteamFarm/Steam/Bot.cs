@@ -3601,6 +3601,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		WalletBalance = callback.LongBalance;
 		WalletBalanceDelayed = callback.LongBalanceDelayed;
 		WalletCurrency = callback.Currency;
+
+		// Check wallet balance condition for automatic pause/resume
+		Utilities.InBackground(async () => await CardsFarmer.CheckWalletBalanceCondition().ConfigureAwait(false));
 	}
 
 	private async Task Reconnect() {

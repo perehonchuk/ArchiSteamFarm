@@ -409,6 +409,11 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			return (false, Strings.BotAutomaticIdlingResumedAlready);
 		}
 
+		// Check if wallet balance condition is preventing resume
+		if (Bot.CardsFarmer.WalletBalanceConditionActive) {
+			return (false, "Cannot resume: Wallet balance below threshold. Please add funds to your Steam Wallet.");
+		}
+
 		Utilities.InBackground(() => Bot.CardsFarmer.Resume(true));
 
 		return (true, Strings.BotAutomaticIdlingNowResumed);

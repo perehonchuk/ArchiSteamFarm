@@ -150,11 +150,17 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	[Required]
 	public bool Paused { get; private set; }
 
+	[JsonInclude]
+	[PublicAPI]
+	public bool WalletBalanceConditionActive { get; private set; }
+
 	private TaskCompletionSource<bool>? FarmingResetEvent;
+	private long LastKnownWalletBalance;
 	private bool ParsingScheduled;
 	private bool PermanentlyPaused;
 	private bool ShouldResumeFarming;
 	private bool ShouldSkipNewGamesIfPossible;
+	private bool WalletConditionPaused;
 
 	internal CardsFarmer(Bot bot) {
 		ArgumentNullException.ThrowIfNull(bot);
@@ -312,6 +318,43 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		ShouldResumeFarming = ShouldSkipNewGamesIfPossible = false;
 	}
 
+	internal async Task CheckWalletBalanceCondition() {
+		const long WalletThresholdInCents = 500; // $5.00 minimum balance to continue farming
+		const long WalletResumeThresholdInCents = 1000; // $10.00 balance to resume farming
+
+		long currentBalance = Bot.WalletBalance;
+
+		// Track if condition state changed
+		bool previousConditionActive = WalletBalanceConditionActive;
+
+		// Check if we should pause due to low wallet balance
+		if (!WalletConditionPaused && (currentBalance < WalletThresholdInCents) && NowFarming) {
+			WalletConditionPaused = true;
+			WalletBalanceConditionActive = true;
+
+			Bot.ArchiLogger.LogGenericInfo($"Wallet balance ({currentBalance / 100.0:F2}) below threshold ({WalletThresholdInCents / 100.0:F2}), pausing farming.");
+
+			await Pause(false).ConfigureAwait(false);
+		}
+		// Check if we should resume due to sufficient wallet balance
+		else if (WalletConditionPaused && (currentBalance >= WalletResumeThresholdInCents)) {
+			WalletConditionPaused = false;
+			WalletBalanceConditionActive = false;
+
+			Bot.ArchiLogger.LogGenericInfo($"Wallet balance ({currentBalance / 100.0:F2}) reached resume threshold ({WalletResumeThresholdInCents / 100.0:F2}), resuming farming.");
+
+			await Resume(false).ConfigureAwait(false);
+		}
+		// Update condition active status even if no action taken
+		else if (currentBalance < WalletThresholdInCents) {
+			WalletBalanceConditionActive = true;
+		} else if (currentBalance >= WalletResumeThresholdInCents) {
+			WalletBalanceConditionActive = false;
+		}
+
+		LastKnownWalletBalance = currentBalance;
+	}
+
 	internal async Task StartFarming() {
 		if (NowFarming || Paused || !Bot.IsPlayingPossible) {
 			return;
@@ -349,6 +392,9 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 				return;
 			}
+
+			// Check wallet balance condition before starting farming
+			await CheckWalletBalanceCondition().ConfigureAwait(false);
 
 			// This is the last moment for final check if we can farm
 			if (Paused || !Bot.IsPlayingPossible) {
