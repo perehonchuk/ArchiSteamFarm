@@ -79,6 +79,25 @@ public sealed class Trading : IDisposable {
 	}
 
 	[PublicAPI]
+	public static Dictionary<EAssetRarity, List<Asset>> GroupItemsByRarity(IReadOnlyCollection<Asset> items) {
+		if ((items == null) || (items.Count == 0)) {
+			throw new ArgumentNullException(nameof(items));
+		}
+
+		Dictionary<EAssetRarity, List<Asset>> result = new();
+
+		foreach (Asset item in items) {
+			if (!result.ContainsKey(item.Rarity)) {
+				result[item.Rarity] = [];
+			}
+
+			result[item.Rarity].Add(item);
+		}
+
+		return result;
+	}
+
+	[PublicAPI]
 	public static bool IsFairExchange(IReadOnlyCollection<Asset> itemsToGive, IReadOnlyCollection<Asset> itemsToReceive) {
 		if ((itemsToGive == null) || (itemsToGive.Count == 0)) {
 			throw new ArgumentNullException(nameof(itemsToGive));

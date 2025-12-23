@@ -654,36 +654,70 @@ public sealed class ArchiWebHandler : IDisposable {
 
 		ArgumentOutOfRangeException.ThrowIfZero(itemsPerTrade);
 
-		TradeOfferSendRequest singleTrade = new();
-		HashSet<TradeOfferSendRequest> trades = [singleTrade];
+		// Group items by rarity to create rarity-based trade batches
+		// This ensures higher-rarity items are sent in separate trades for better organization
+		Dictionary<EAssetRarity, List<Asset>> itemsToGiveByRarity = new();
+		Dictionary<EAssetRarity, List<Asset>> itemsToReceiveByRarity = new();
 
 		if (itemsToGive != null) {
-			foreach (Asset itemToGive in itemsToGive) {
-				if (!forcedSingleOffer && (singleTrade.ItemsToGive.Assets.Count + singleTrade.ItemsToReceive.Assets.Count >= itemsPerTrade)) {
-					if (trades.Count >= Trading.MaxTradesPerAccount) {
-						break;
-					}
-
-					singleTrade = new TradeOfferSendRequest();
-					trades.Add(singleTrade);
+			foreach (Asset item in itemsToGive) {
+				if (!itemsToGiveByRarity.ContainsKey(item.Rarity)) {
+					itemsToGiveByRarity[item.Rarity] = [];
 				}
 
-				singleTrade.ItemsToGive.Assets.Add(itemToGive);
+				itemsToGiveByRarity[item.Rarity].Add(item);
 			}
 		}
 
 		if (itemsToReceive != null) {
-			foreach (Asset itemToReceive in itemsToReceive) {
-				if (!forcedSingleOffer && (singleTrade.ItemsToGive.Assets.Count + singleTrade.ItemsToReceive.Assets.Count >= itemsPerTrade)) {
-					if (trades.Count >= Trading.MaxTradesPerAccount) {
-						break;
-					}
-
-					singleTrade = new TradeOfferSendRequest();
-					trades.Add(singleTrade);
+			foreach (Asset item in itemsToReceive) {
+				if (!itemsToReceiveByRarity.ContainsKey(item.Rarity)) {
+					itemsToReceiveByRarity[item.Rarity] = [];
 				}
 
-				singleTrade.ItemsToReceive.Assets.Add(itemToReceive);
+				itemsToReceiveByRarity[item.Rarity].Add(item);
+			}
+		}
+
+		// Sort rarities in descending order (highest rarity first)
+		List<EAssetRarity> sortedRarities = itemsToGiveByRarity.Keys
+			.Union(itemsToReceiveByRarity.Keys)
+			.OrderByDescending(static r => r)
+			.ToList();
+
+		TradeOfferSendRequest singleTrade = new();
+		HashSet<TradeOfferSendRequest> trades = [singleTrade];
+
+		// Process items rarity by rarity, creating separate trades for each rarity group
+		foreach (EAssetRarity rarity in sortedRarities) {
+			if (itemsToGiveByRarity.TryGetValue(rarity, out List<Asset>? itemsToGiveInRarity)) {
+				foreach (Asset itemToGive in itemsToGiveInRarity) {
+					if (!forcedSingleOffer && (singleTrade.ItemsToGive.Assets.Count + singleTrade.ItemsToReceive.Assets.Count >= itemsPerTrade)) {
+						if (trades.Count >= Trading.MaxTradesPerAccount) {
+							break;
+						}
+
+						singleTrade = new TradeOfferSendRequest();
+						trades.Add(singleTrade);
+					}
+
+					singleTrade.ItemsToGive.Assets.Add(itemToGive);
+				}
+			}
+
+			if (itemsToReceiveByRarity.TryGetValue(rarity, out List<Asset>? itemsToReceiveInRarity)) {
+				foreach (Asset itemToReceive in itemsToReceiveInRarity) {
+					if (!forcedSingleOffer && (singleTrade.ItemsToGive.Assets.Count + singleTrade.ItemsToReceive.Assets.Count >= itemsPerTrade)) {
+						if (trades.Count >= Trading.MaxTradesPerAccount) {
+							break;
+						}
+
+						singleTrade = new TradeOfferSendRequest();
+						trades.Add(singleTrade);
+					}
+
+					singleTrade.ItemsToReceive.Assets.Add(itemToReceive);
+				}
 			}
 		}
 
