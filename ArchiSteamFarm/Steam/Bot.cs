@@ -296,6 +296,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private CancellationTokenSource? CallbacksAborted;
 	private Timer? ConnectionFailureTimer;
 	private bool FirstTradeSent;
+	private Timer? FriendRequestQueueTimer;
 	private Timer? GamesRedeemerInBackgroundTimer;
 	private string? IPCountryCode;
 	private EResult LastLogOnResult;
@@ -441,6 +442,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		if (ConnectionFailureTimer != null) {
 			await ConnectionFailureTimer.DisposeAsync().ConfigureAwait(false);
+		}
+
+		if (FriendRequestQueueTimer != null) {
+			await FriendRequestQueueTimer.DisposeAsync().ConfigureAwait(false);
 		}
 
 		if (GamesRedeemerInBackgroundTimer != null) {
@@ -1027,6 +1032,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		if ((GamesRedeemerInBackgroundTimer == null) && BotDatabase.HasGamesToRedeemInBackground && IsConnectedAndLoggedOn) {
 			Utilities.InBackground(() => RedeemGamesInBackground());
+		}
+
+		if ((FriendRequestQueueTimer == null) && IsConnectedAndLoggedOn) {
+			InitFriendRequestQueueTimer();
 		}
 	}
 
@@ -3043,7 +3052,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 						break;
 					}
 
-					ArchiLogger.LogInvite(friend.SteamID);
+					// Queue friend request for delayed acceptance
+					if (BotConfig.FriendRequestDelay > 0) {
+						BotDatabase.AddPendingFriendRequest(friend.SteamID);
+						ArchiLogger.LogGenericDebug($"Friend request from {friend.SteamID} queued for delayed acceptance ({BotConfig.FriendRequestDelay} seconds)");
+					} else {
+						ArchiLogger.LogInvite(friend.SteamID);
+					}
 
 					break;
 			}
@@ -4168,6 +4183,48 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		ArchiLogger.LogGenericInfo(Strings.Done);
 
 		return (true, steamParentalCode);
+	}
+
+	private void InitFriendRequestQueueTimer() {
+		if (FriendRequestQueueTimer != null) {
+			return;
+		}
+
+		if (BotConfig.FriendRequestDelay == 0) {
+			return;
+		}
+
+		FriendRequestQueueTimer = new Timer(
+			ProcessFriendRequestQueue,
+			null,
+			TimeSpan.FromSeconds(30), // Initial delay
+			TimeSpan.FromSeconds(60) // Check every minute
+		);
+	}
+
+	private async void ProcessFriendRequestQueue(object? state = null) {
+		if (!IsConnectedAndLoggedOn) {
+			return;
+		}
+
+		List<ulong> dueRequests = BotDatabase.GetDueFriendRequests(BotConfig.FriendRequestDelay);
+
+		if (dueRequests.Count == 0) {
+			return;
+		}
+
+		foreach (ulong steamID in dueRequests) {
+			ArchiLogger.LogGenericInfo($"Processing queued friend request from {steamID}");
+
+			if (!await ArchiHandler.AddFriend(steamID).ConfigureAwait(false)) {
+				ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiHandler.AddFriend)));
+			}
+
+			BotDatabase.RemovePendingFriendRequest(steamID);
+
+			// Small delay between processing multiple requests to appear more natural
+			await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+		}
 	}
 
 	public enum EFileType : byte {

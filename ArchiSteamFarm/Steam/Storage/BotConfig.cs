@@ -94,6 +94,9 @@ public sealed class BotConfig {
 	public const byte DefaultSendTradePeriod = 0;
 
 	[PublicAPI]
+	public const ushort DefaultFriendRequestDelay = 300;
+
+	[PublicAPI]
 	public const string? DefaultSteamLogin = null;
 
 	[PublicAPI]
@@ -267,6 +270,10 @@ public sealed class BotConfig {
 	public byte SendTradePeriod { get; init; } = DefaultSendTradePeriod;
 
 	[JsonInclude]
+	[Range(ushort.MinValue, ushort.MaxValue)]
+	public ushort FriendRequestDelay { get; init; } = DefaultFriendRequestDelay;
+
+	[JsonInclude]
 	public string? SteamLogin {
 		get;
 
@@ -438,6 +445,9 @@ public sealed class BotConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeSendTradePeriod() => !Saving || (SendTradePeriod != DefaultSendTradePeriod);
+
+	[PublicAPI]
+	public bool ShouldSerializeFriendRequestDelay() => !Saving || (FriendRequestDelay != DefaultFriendRequestDelay);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeSSteamMasterClanID() => !Saving;

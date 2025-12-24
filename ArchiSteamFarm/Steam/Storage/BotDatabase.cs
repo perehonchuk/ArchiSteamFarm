@@ -192,6 +192,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	internal Dictionary<ulong, DateTime> PendingFriendRequests { get; private init; } = new();
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
 	private BotDatabase(string filePath) : this() {
@@ -404,6 +409,51 @@ public sealed class BotDatabase : GenericDatabase {
 
 		lock (GamesToRedeemInBackground) {
 			if (!GamesToRedeemInBackground.Remove(key)) {
+				return;
+			}
+		}
+
+		Utilities.InBackground(Save);
+	}
+
+	internal void AddPendingFriendRequest(ulong steamID) {
+		if (steamID == 0) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		lock (PendingFriendRequests) {
+			if (!PendingFriendRequests.TryAdd(steamID, DateTime.UtcNow)) {
+				return;
+			}
+		}
+
+		Utilities.InBackground(Save);
+	}
+
+	internal List<ulong> GetDueFriendRequests(int minDelaySeconds) {
+		if (minDelaySeconds < 0) {
+			throw new ArgumentOutOfRangeException(nameof(minDelaySeconds));
+		}
+
+		DateTime threshold = DateTime.UtcNow.AddSeconds(-minDelaySeconds);
+		List<ulong> dueRequests = new();
+
+		lock (PendingFriendRequests) {
+			foreach ((ulong steamID, DateTime queuedAt) in PendingFriendRequests.Where(entry => entry.Value <= threshold)) {
+				dueRequests.Add(steamID);
+			}
+		}
+
+		return dueRequests;
+	}
+
+	internal void RemovePendingFriendRequest(ulong steamID) {
+		if (steamID == 0) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		lock (PendingFriendRequests) {
+			if (!PendingFriendRequests.Remove(steamID)) {
 				return;
 			}
 		}
