@@ -153,6 +153,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private TaskCompletionSource<bool>? FarmingResetEvent;
 	private bool ParsingScheduled;
 	private bool PermanentlyPaused;
+	private bool QueueBasedPause;
 	private bool ShouldResumeFarming;
 	private bool ShouldSkipNewGamesIfPossible;
 
@@ -267,9 +268,13 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	internal async Task Pause(bool permanent) {
+	internal async Task Pause(bool permanent, bool queueBased = false) {
 		if (permanent) {
 			PermanentlyPaused = true;
+			QueueBasedPause = false;
+		} else if (queueBased) {
+			QueueBasedPause = true;
+			PermanentlyPaused = false;
 		}
 
 		Paused = true;
@@ -292,6 +297,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			PermanentlyPaused = false;
 		}
 
+		QueueBasedPause = false;
 		Paused = false;
 
 		if (NowFarming) {
@@ -442,7 +448,18 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	}
 
 	private async void CheckGamesForFarming(object? state = null) {
-		if (NowFarming || Paused || !Bot.IsConnectedAndLoggedOn) {
+		if (NowFarming || !Bot.IsConnectedAndLoggedOn) {
+			return;
+		}
+
+		if (Paused && !QueueBasedPause) {
+			return;
+		}
+
+		if (QueueBasedPause && (GamesToFarm.Count > 0)) {
+			Bot.ArchiLogger.LogGenericInfo("Queue-based pause detected with games available, auto-resuming farming...");
+			await Resume(false).ConfigureAwait(false);
+
 			return;
 		}
 

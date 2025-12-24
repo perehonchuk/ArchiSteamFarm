@@ -294,12 +294,12 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
-	public async Task<(bool Success, string Message)> Pause(bool permanent, ushort resumeInSeconds = 0) {
+	public async Task<(bool Success, string Message)> Pause(bool permanent, ushort resumeInSeconds = 0, bool queueBased = false) {
 		if (Bot.CardsFarmer.Paused) {
 			return (false, Strings.BotAutomaticIdlingPausedAlready);
 		}
 
-		await Bot.CardsFarmer.Pause(permanent).ConfigureAwait(false);
+		await Bot.CardsFarmer.Pause(permanent, queueBased).ConfigureAwait(false);
 
 		if (!permanent && (Bot.BotConfig.GamesPlayedWhileIdle.Count > 0)) {
 			// We want to let family sharing users access our library, and in this case we must also stop GamesPlayedWhileIdle

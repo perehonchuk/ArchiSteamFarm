@@ -151,6 +151,8 @@ public sealed class Commands {
 						return ResponseMatchActivelyBlacklist(access);
 					case "PAUSE":
 						return await ResponsePause(access, true).ConfigureAwait(false);
+					case "PAUSE!":
+						return await ResponsePause(access, false, null, true).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, false).ConfigureAwait(false);
 					case "POINTS":
@@ -280,6 +282,8 @@ public sealed class Commands {
 						return (await ResponseOwns(access, args[1]).ConfigureAwait(false)).Response;
 					case "PAUSE":
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID: steamID).ConfigureAwait(false);
+					case "PAUSE!":
+						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), false, null, true, steamID).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), false, steamID: steamID).ConfigureAwait(false);
 					case "PAUSE&" when args.Length > 2:
@@ -2247,7 +2251,7 @@ public sealed class Commands {
 		return string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Concat(extraResponses));
 	}
 
-	private async Task<string?> ResponsePause(EAccess access, bool permanent, string? resumeInSecondsText = null) {
+	private async Task<string?> ResponsePause(EAccess access, bool permanent, string? resumeInSecondsText = null, bool queueBased = false) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
@@ -2266,12 +2270,12 @@ public sealed class Commands {
 			return Strings.FormatErrorIsInvalid(nameof(resumeInSecondsText));
 		}
 
-		(bool success, string message) = await Bot.Actions.Pause(permanent, resumeInSeconds).ConfigureAwait(false);
+		(bool success, string message) = await Bot.Actions.Pause(permanent, resumeInSeconds, queueBased).ConfigureAwait(false);
 
 		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
 	}
 
-	private static async Task<string?> ResponsePause(EAccess access, string botNames, bool permanent, string? resumeInSecondsText = null, ulong steamID = 0) {
+	private static async Task<string?> ResponsePause(EAccess access, string botNames, bool permanent, string? resumeInSecondsText = null, bool queueBased = false, ulong steamID = 0) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
@@ -2284,7 +2288,7 @@ public sealed class Commands {
 			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
 		}
 
-		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePause(GetProxyAccess(bot, access, steamID), permanent, resumeInSecondsText))).ConfigureAwait(false);
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePause(GetProxyAccess(bot, access, steamID), permanent, resumeInSecondsText, queueBased))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
