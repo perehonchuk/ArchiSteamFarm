@@ -565,6 +565,21 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					result.UnionWith(onlineBots);
 
 					continue;
+				case "@PAUSED":
+					IEnumerable<Bot> pausedBots = Bots.Where(static bot => bot.Value.CardsFarmer.Paused).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(pausedBots);
+
+					continue;
+				case "@ACTIVE":
+					IEnumerable<Bot> activeBots = Bots.Where(static bot => !bot.Value.CardsFarmer.Paused && bot.Value.KeepRunning).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(activeBots);
+
+					continue;
+				case "@ENABLED":
+					IEnumerable<Bot> enabledBots = Bots.Where(static bot => bot.Value.BotConfig.Enabled).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(enabledBots);
+
+					continue;
 			}
 
 			if ((botName.Length > 2) && SharedInfo.RangeIndicators.Any(rangeIndicator => botName.Contains(rangeIndicator, StringComparison.Ordinal))) {

@@ -705,6 +705,27 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 	internal void OnDisconnected() => HandledGifts.Clear();
 
+	[PublicAPI]
+	public static HashSet<Bot> FilterBotsByState(IEnumerable<Bot> bots, bool? paused = null, bool? active = null, bool? enabled = null) {
+		ArgumentNullException.ThrowIfNull(bots);
+
+		IEnumerable<Bot> result = bots;
+
+		if (paused.HasValue) {
+			result = result.Where(bot => bot.CardsFarmer.Paused == paused.Value);
+		}
+
+		if (active.HasValue) {
+			result = result.Where(bot => (!bot.CardsFarmer.Paused && bot.KeepRunning) == active.Value);
+		}
+
+		if (enabled.HasValue) {
+			result = result.Where(bot => bot.BotConfig.Enabled == enabled.Value);
+		}
+
+		return result.ToHashSet();
+	}
+
 	private static async Task LimitGiftsRequestsAsync() {
 		if (ASF.GiftsSemaphore == null) {
 			throw new InvalidOperationException(nameof(ASF.GiftsSemaphore));
