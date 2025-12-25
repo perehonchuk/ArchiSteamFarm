@@ -248,6 +248,16 @@ public sealed class MobileAuthenticator : IDisposable {
 			throw new InvalidOperationException(nameof(Bot));
 		}
 
+		// Log confirmation types being processed for transparency
+		if (confirmations.Count > 1) {
+			Dictionary<Confirmation.EConfirmationType, int> typeCounts = confirmations
+				.GroupBy(static c => c.ConfirmationType)
+				.ToDictionary(static g => g.Key, static g => g.Count());
+
+			string typesSummary = string.Join(", ", typeCounts.Select(static kv => $"{kv.Value} {kv.Key}"));
+			Bot.ArchiLogger.LogGenericTrace($"Processing {confirmations.Count} confirmations in priority order: {typesSummary}");
+		}
+
 		(_, string? deviceID) = await CachedDeviceID.GetValue(ECacheFallback.SuccessPreviously).ConfigureAwait(false);
 
 		if (string.IsNullOrEmpty(deviceID)) {

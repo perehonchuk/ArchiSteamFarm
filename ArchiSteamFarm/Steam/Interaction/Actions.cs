@@ -154,9 +154,16 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		ImmutableHashSet<Confirmation>? confirmations = await Bot.BotDatabase.MobileAuthenticator.GetConfirmations().ConfigureAwait(false);
 
-		bool success = confirmations != null;
+		if (confirmations == null) {
+			return (false, null, Strings.WarningFailed);
+		}
 
-		return (success, confirmations, success ? Strings.Success : Strings.WarningFailed);
+		// Return confirmations sorted by priority for consistency
+		List<Confirmation> prioritizedConfirmations = confirmations
+			.OrderBy(GetConfirmationPriority)
+			.ToList();
+
+		return (true, prioritizedConfirmations, Strings.Success);
 	}
 
 	[PublicAPI]
@@ -257,13 +264,19 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 				}
 			}
 
-			if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(remainingConfirmations, accept).ConfigureAwait(false)) {
+			// Sort confirmations by priority: Trade (highest), Market, then others
+			// This ensures critical confirmations are processed first to avoid timeouts
+			List<Confirmation> prioritizedConfirmations = remainingConfirmations
+				.OrderBy(GetConfirmationPriority)
+				.ToList();
+
+			if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(prioritizedConfirmations, accept).ConfigureAwait(false)) {
 				return (false, handledConfirmations?.Values, Strings.WarningFailed);
 			}
 
 			handledConfirmations ??= new Dictionary<ulong, Confirmation>();
 
-			foreach (Confirmation confirmation in remainingConfirmations) {
+			foreach (Confirmation confirmation in prioritizedConfirmations) {
 				handledConfirmations[confirmation.CreatorID] = confirmation;
 			}
 
@@ -280,6 +293,20 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		// If we've reached this point, then it's a failure for waitIfNeeded, and success otherwise
 		return (!waitIfNeeded, handledConfirmations?.Values, !waitIfNeeded ? Strings.FormatBotHandledConfirmations(handledConfirmations?.Count ?? 0) : Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
+	}
+
+	private static byte GetConfirmationPriority(Confirmation confirmation) {
+		// Lower number = higher priority
+		return confirmation.ConfirmationType switch {
+			Confirmation.EConfirmationType.Trade => 1,
+			Confirmation.EConfirmationType.Market => 2,
+			Confirmation.EConfirmationType.PhoneNumberChange => 3,
+			Confirmation.EConfirmationType.AccountRecovery => 3,
+			Confirmation.EConfirmationType.ApiKeyRegistration => 4,
+			Confirmation.EConfirmationType.FamilyJoin => 4,
+			Confirmation.EConfirmationType.AccountSecurity => 3,
+			_ => 5
+		};
 	}
 
 	[PublicAPI]
