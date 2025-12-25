@@ -47,6 +47,10 @@ public sealed class MobileAuthenticator : IDisposable {
 
 	private const byte CodeInterval = 30;
 
+	// Confirmation batching constants
+	private const byte ConfirmationBatchSize = 10; // Maximum confirmations to process in a single batch
+	private const ushort ConfirmationBatchDelayMilliseconds = 500; // Delay between batches in milliseconds
+
 	// For how many minutes we can assume that SteamTimeDifference is correct
 	private const byte SteamTimeTTL = 15;
 
@@ -248,6 +252,49 @@ public sealed class MobileAuthenticator : IDisposable {
 			throw new InvalidOperationException(nameof(Bot));
 		}
 
+		// Sort confirmations by priority before processing
+		List<Confirmation> sortedConfirmations = SortConfirmationsByPriority(confirmations);
+
+		// Process confirmations in batches with priority-based ordering
+		List<Confirmation> allConfirmations = new(sortedConfirmations);
+		int processedCount = 0;
+		int totalBatches = (int) Math.Ceiling((double) allConfirmations.Count / ConfirmationBatchSize);
+
+		if (totalBatches > 1) {
+			Bot.ArchiLogger.LogGenericInfo($"Processing {allConfirmations.Count} confirmations in {totalBatches} batches with priority-based ordering...");
+		}
+
+		while (processedCount < allConfirmations.Count) {
+			int batchSize = Math.Min(ConfirmationBatchSize, allConfirmations.Count - processedCount);
+			List<Confirmation> batch = allConfirmations.GetRange(processedCount, batchSize);
+
+			if (totalBatches > 1) {
+				int currentBatch = (processedCount / ConfirmationBatchSize) + 1;
+				Bot.ArchiLogger.LogGenericInfo($"Processing batch {currentBatch}/{totalBatches} ({batchSize} confirmations)...");
+			}
+
+			bool batchResult = await ProcessConfirmationBatch(batch, accept).ConfigureAwait(false);
+
+			if (!batchResult) {
+				return false;
+			}
+
+			processedCount += batchSize;
+
+			// Add delay between batches if there are more to process
+			if (processedCount < allConfirmations.Count) {
+				await Task.Delay(ConfirmationBatchDelayMilliseconds).ConfigureAwait(false);
+			}
+		}
+
+		return true;
+	}
+
+	private async Task<bool> ProcessConfirmationBatch(IReadOnlyCollection<Confirmation> confirmations, bool accept) {
+		if (Bot == null) {
+			throw new InvalidOperationException(nameof(Bot));
+		}
+
 		(_, string? deviceID) = await CachedDeviceID.GetValue(ECacheFallback.SuccessPreviously).ConfigureAwait(false);
 
 		if (string.IsNullOrEmpty(deviceID)) {
@@ -294,6 +341,23 @@ public sealed class MobileAuthenticator : IDisposable {
 		}
 
 		return true;
+	}
+
+	private static List<Confirmation> SortConfirmationsByPriority(IReadOnlyCollection<Confirmation> confirmations) {
+		// Priority order: Trade > Market > FamilyJoin > AccountSecurity > PhoneNumberChange > AccountRecovery > ApiKeyRegistration > Generic > Unknown
+		Dictionary<Confirmation.EConfirmationType, int> priorityMap = new() {
+			{ Confirmation.EConfirmationType.Trade, 1 },
+			{ Confirmation.EConfirmationType.Market, 2 },
+			{ Confirmation.EConfirmationType.FamilyJoin, 3 },
+			{ Confirmation.EConfirmationType.AccountSecurity, 4 },
+			{ Confirmation.EConfirmationType.PhoneNumberChange, 5 },
+			{ Confirmation.EConfirmationType.AccountRecovery, 6 },
+			{ Confirmation.EConfirmationType.ApiKeyRegistration, 7 },
+			{ Confirmation.EConfirmationType.Generic, 8 },
+			{ Confirmation.EConfirmationType.Unknown, 9 }
+		};
+
+		return confirmations.OrderBy(c => priorityMap.GetValueOrDefault(c.ConfirmationType, 10)).ThenBy(static c => c.CreatorID).ToList();
 	}
 
 	internal void Init(Bot bot) {
