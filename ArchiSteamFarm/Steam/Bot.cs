@@ -75,6 +75,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private const byte MinimumAccessTokenValidityMinutes = 5;
 	private const byte RedeemCooldownInHours = 1; // 1 hour since first redeem attempt, this is a limitation enforced by Steam
 	private const byte RegionRestrictionPlayableBlockMonths = 3;
+	private const ushort BaseReconnectionDelaySeconds = 5; // Base delay for first reconnection attempt
+	private const byte MaxConsecutiveReconnectionAttempts = 5; // After this many consecutive attempts, use maximum delay
+	private const ushort MaxReconnectionDelaySeconds = 120; // Maximum delay between reconnection attempts (2 minutes)
+	private const byte ReconnectionCounterResetMinutes = 15; // Reset counter if this many minutes pass between reconnections
 
 	[PublicAPI]
 	public static IReadOnlyDictionary<string, Bot>? BotsReadOnly => Bots;
@@ -140,6 +144,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	[JsonInclude]
 	[PublicAPI]
 	public bool IsPlayingPossible => !PlayingBlocked && !LibraryLocked;
+
+	[JsonInclude]
+	[PublicAPI]
+	public byte ReconnectionAttemptsCount => ConsecutiveReconnectionAttempts;
 
 	[JsonInclude]
 	[PublicAPI]
@@ -295,6 +303,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private string? AuthCode;
 	private CancellationTokenSource? CallbacksAborted;
 	private Timer? ConnectionFailureTimer;
+	private byte ConsecutiveReconnectionAttempts;
+	private DateTime? LastReconnectionAttempt;
 	private bool FirstTradeSent;
 	private Timer? GamesRedeemerInBackgroundTimer;
 	private string? IPCountryCode;
@@ -2072,6 +2082,27 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await PluginsCore.OnBotDestroy(this).ConfigureAwait(false);
 	}
 
+	private ushort CalculateReconnectionDelay() {
+		DateTime now = DateTime.UtcNow;
+
+		// Reset counter if enough time has passed since last reconnection
+		if (LastReconnectionAttempt.HasValue && now.Subtract(LastReconnectionAttempt.Value).TotalMinutes >= ReconnectionCounterResetMinutes) {
+			ConsecutiveReconnectionAttempts = 0;
+		}
+
+		ConsecutiveReconnectionAttempts++;
+		LastReconnectionAttempt = now;
+
+		// Calculate exponential backoff: BaseDelay * 2^(attempts - 1), capped at MaxDelay
+		if (ConsecutiveReconnectionAttempts >= MaxConsecutiveReconnectionAttempts) {
+			return MaxReconnectionDelaySeconds;
+		}
+
+		ushort calculatedDelay = (ushort) (BaseReconnectionDelaySeconds * Math.Pow(2, ConsecutiveReconnectionAttempts - 1));
+
+		return Math.Min(calculatedDelay, MaxReconnectionDelaySeconds);
+	}
+
 	private void Disconnect(bool reconnect = false) {
 		StopConnectionFailureTimer();
 
@@ -2716,6 +2747,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		ReconnectOnUserInitiated = false;
 		StopConnectionFailureTimer();
 
+		// Reset reconnection tracking on successful connection
+		ConsecutiveReconnectionAttempts = 0;
+		LastReconnectionAttempt = null;
+
 		ArchiLogger.LogGenericInfo(Strings.BotConnected);
 
 		if (!KeepRunning) {
@@ -2938,8 +2973,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				break;
 			default:
-				// Generic delay before retrying
-				await Task.Delay(5000).ConfigureAwait(false);
+				// Progressive reconnection delay based on consecutive attempts
+				ushort delaySeconds = CalculateReconnectionDelay();
+				ArchiLogger.LogGenericInfo($"Reconnecting in {delaySeconds} seconds (attempt {ConsecutiveReconnectionAttempts})...");
+				await Task.Delay(delaySeconds * 1000).ConfigureAwait(false);
 
 				break;
 		}
