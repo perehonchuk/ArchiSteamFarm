@@ -57,6 +57,10 @@ public sealed class Confirmation {
 	[JsonRequired]
 	internal ulong Nonce { get; private init; }
 
+	[JsonInclude]
+	[JsonPropertyName("priority")]
+	public byte Priority { get; internal set; }
+
 	[JsonConstructor]
 	private Confirmation() { }
 

@@ -198,6 +198,9 @@ public sealed class MobileAuthenticator : IDisposable {
 			Bot.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(confirmation.ConfirmationType), $"{confirmation.ConfirmationType} ({confirmation.ConfirmationTypeName ?? "null"})"));
 		}
 
+		// Assign priorities to confirmations based on type and ID
+		AssignConfirmationPriorities(response.Confirmations);
+
 		return response.Confirmations;
 	}
 
@@ -415,5 +418,43 @@ public sealed class MobileAuthenticator : IDisposable {
 		}
 
 		return (true, deviceID);
+	}
+
+	private static void AssignConfirmationPriorities(ImmutableHashSet<Confirmation> confirmations) {
+		if (confirmations.Count == 0) {
+			return;
+		}
+
+		// Sort confirmations by ID (lower ID = older confirmation)
+		List<Confirmation> sortedConfirmations = confirmations.OrderBy(static c => c.ID).ToList();
+
+		// Assign priorities based on type and age
+		foreach (Confirmation confirmation in sortedConfirmations) {
+			byte basePriority = confirmation.ConfirmationType switch {
+				// Critical confirmations that should be handled immediately
+				Confirmation.EConfirmationType.Trade => 10,
+				Confirmation.EConfirmationType.Market => 20,
+				// Security-related confirmations with high priority
+				Confirmation.EConfirmationType.PhoneNumberChange => 30,
+				Confirmation.EConfirmationType.AccountRecovery => 35,
+				Confirmation.EConfirmationType.AccountSecurity => 40,
+				// Less urgent confirmations
+				Confirmation.EConfirmationType.ApiKeyRegistration => 50,
+				Confirmation.EConfirmationType.FamilyJoin => 60,
+				Confirmation.EConfirmationType.Generic => 70,
+				// Unknown types get lowest priority
+				_ => 100
+			};
+
+			confirmation.Priority = basePriority;
+		}
+
+		// Apply age-based priority boost for older confirmations
+		// This ensures older confirmations are processed first to prevent expiration
+		for (int i = 0; i < sortedConfirmations.Count; i++) {
+			// Reduce priority value (increase urgency) for older confirmations
+			byte agePriorityBoost = (byte) Math.Min(50, (sortedConfirmations.Count - i - 1) * 2);
+			sortedConfirmations[i].Priority = (byte) Math.Max(1, sortedConfirmations[i].Priority - agePriorityBoost);
+		}
 	}
 }

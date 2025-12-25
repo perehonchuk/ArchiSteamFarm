@@ -239,7 +239,8 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 				continue;
 			}
 
-			HashSet<Confirmation> remainingConfirmations = confirmations.ToHashSet();
+			// Sort confirmations by priority (lower value = higher priority)
+			HashSet<Confirmation> remainingConfirmations = confirmations.OrderBy(static c => c.Priority).ThenBy(static c => c.ID).ToHashSet();
 
 			if (acceptedType.HasValue) {
 				if (remainingConfirmations.RemoveWhere(confirmation => confirmation.ConfirmationType != acceptedType.Value) > 0) {
