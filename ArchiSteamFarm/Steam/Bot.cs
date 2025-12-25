@@ -1019,11 +1019,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	}
 
 	internal void AddGamesToRedeemInBackground(IReadOnlyDictionary<string, string> gamesToRedeemInBackground) {
+		AddGamesToRedeemInBackground(gamesToRedeemInBackground, BotDatabase.EBgrPriority.Normal);
+	}
+
+	internal void AddGamesToRedeemInBackground(IReadOnlyDictionary<string, string> gamesToRedeemInBackground, BotDatabase.EBgrPriority priority) {
 		if ((gamesToRedeemInBackground == null) || (gamesToRedeemInBackground.Count == 0)) {
 			throw new ArgumentNullException(nameof(gamesToRedeemInBackground));
 		}
 
-		BotDatabase.AddGamesToRedeemInBackground(gamesToRedeemInBackground);
+		BotDatabase.AddGamesToRedeemInBackground(gamesToRedeemInBackground, priority);
 
 		if ((GamesRedeemerInBackgroundTimer == null) && BotDatabase.HasGamesToRedeemInBackground && IsConnectedAndLoggedOn) {
 			Utilities.InBackground(() => RedeemGamesInBackground());
@@ -1471,7 +1475,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		try {
+			OrderedDictionary<string, string> gamesToRedeemInBackgroundHigh = new(StringComparer.OrdinalIgnoreCase);
 			OrderedDictionary<string, string> gamesToRedeemInBackground = new(StringComparer.OrdinalIgnoreCase);
+			OrderedDictionary<string, string> gamesToRedeemInBackgroundLow = new(StringComparer.OrdinalIgnoreCase);
 
 			using (StreamReader reader = new(filePath)) {
 				while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line) {
@@ -1483,6 +1489,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					// Key (name will be the same as key and replaced from redemption result, if possible)
 					// Name + Key (user provides both, if name is equal to key, above logic is used, otherwise name is kept)
 					// Name + <Ignored> + Key (BGR output format, we include extra properties in the middle, those are ignored during import)
+					// [HIGH] Name + Key (high priority)
+					// [LOW] Name + Key (low priority)
 					string[] parsedArgs = line.Split(DefaultBackgroundKeysRedeemerSeparator, StringSplitOptions.RemoveEmptyEntries);
 
 					if (parsedArgs.Length < 1) {
@@ -1494,7 +1502,32 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					string name = parsedArgs[0];
 					string key = parsedArgs[^1];
 
-					gamesToRedeemInBackground[key] = name;
+					// Check for priority markers
+					BotDatabase.EBgrPriority priority = BotDatabase.EBgrPriority.Normal;
+
+					if (name.StartsWith("[HIGH]", StringComparison.OrdinalIgnoreCase)) {
+						priority = BotDatabase.EBgrPriority.High;
+						name = name[6..].TrimStart();
+					} else if (name.StartsWith("[LOW]", StringComparison.OrdinalIgnoreCase)) {
+						priority = BotDatabase.EBgrPriority.Low;
+						name = name[5..].TrimStart();
+					}
+
+					OrderedDictionary<string, string> targetQueue = priority switch {
+						BotDatabase.EBgrPriority.High => gamesToRedeemInBackgroundHigh,
+						BotDatabase.EBgrPriority.Low => gamesToRedeemInBackgroundLow,
+						_ => gamesToRedeemInBackground
+					};
+
+					targetQueue[key] = name;
+				}
+			}
+
+			if (gamesToRedeemInBackgroundHigh.Count > 0) {
+				FilterGamesToRedeemInBackground(gamesToRedeemInBackgroundHigh);
+
+				if (gamesToRedeemInBackgroundHigh.Count > 0) {
+					AddGamesToRedeemInBackground(gamesToRedeemInBackgroundHigh, BotDatabase.EBgrPriority.High);
 				}
 			}
 
@@ -1503,6 +1536,14 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				if (gamesToRedeemInBackground.Count > 0) {
 					AddGamesToRedeemInBackground(gamesToRedeemInBackground);
+				}
+			}
+
+			if (gamesToRedeemInBackgroundLow.Count > 0) {
+				FilterGamesToRedeemInBackground(gamesToRedeemInBackgroundLow);
+
+				if (gamesToRedeemInBackgroundLow.Count > 0) {
+					AddGamesToRedeemInBackground(gamesToRedeemInBackgroundLow, BotDatabase.EBgrPriority.Low);
 				}
 			}
 

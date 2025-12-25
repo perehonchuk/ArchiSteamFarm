@@ -38,11 +38,21 @@ using JetBrains.Annotations;
 
 namespace ArchiSteamFarm.Steam.Storage;
 
+public enum EBgrPriority : byte {
+	Low = 0,
+	Normal = 1,
+	High = 2
+}
+
 public sealed class BotDatabase : GenericDatabase {
 	internal uint GamesToRedeemInBackgroundCount {
 		get {
-			lock (GamesToRedeemInBackground) {
-				return (uint) GamesToRedeemInBackground.Count;
+			lock (GamesToRedeemInBackgroundHigh) {
+				lock (GamesToRedeemInBackground) {
+					lock (GamesToRedeemInBackgroundLow) {
+						return (uint) (GamesToRedeemInBackgroundHigh.Count + GamesToRedeemInBackground.Count + GamesToRedeemInBackgroundLow.Count);
+					}
+				}
 			}
 		}
 	}
@@ -194,6 +204,16 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	private OrderedDictionary<string, string> GamesToRedeemInBackgroundHigh { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	private OrderedDictionary<string, string> GamesToRedeemInBackgroundLow { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
 	private BotDatabase(string filePath) : this() {
 		ArgumentException.ThrowIfNullOrEmpty(filePath);
 
@@ -262,7 +282,13 @@ public sealed class BotDatabase : GenericDatabase {
 	public bool ShouldSerializeFarmingRiskyPrioritizedAppIDs() => FarmingRiskyPrioritizedAppIDs.Count > 0;
 
 	[UsedImplicitly]
-	public bool ShouldSerializeGamesToRedeemInBackground() => HasGamesToRedeemInBackground;
+	public bool ShouldSerializeGamesToRedeemInBackground() => GamesToRedeemInBackground.Count > 0;
+
+	[UsedImplicitly]
+	public bool ShouldSerializeGamesToRedeemInBackgroundHigh() => GamesToRedeemInBackgroundHigh.Count > 0;
+
+	[UsedImplicitly]
+	public bool ShouldSerializeGamesToRedeemInBackgroundLow() => GamesToRedeemInBackgroundLow.Count > 0;
 
 	[UsedImplicitly]
 	public bool ShouldSerializeMatchActivelyBlacklistAppIDs() => MatchActivelyBlacklistAppIDs.Count > 0;
@@ -304,17 +330,27 @@ public sealed class BotDatabase : GenericDatabase {
 	protected override Task Save() => Save(this);
 
 	internal void AddGamesToRedeemInBackground(IReadOnlyDictionary<string, string> games) {
+		AddGamesToRedeemInBackground(games, EBgrPriority.Normal);
+	}
+
+	internal void AddGamesToRedeemInBackground(IReadOnlyDictionary<string, string> games, EBgrPriority priority) {
 		if ((games == null) || (games.Count == 0)) {
 			throw new ArgumentNullException(nameof(games));
 		}
 
-		lock (GamesToRedeemInBackground) {
+		OrderedDictionary<string, string> targetQueue = priority switch {
+			EBgrPriority.High => GamesToRedeemInBackgroundHigh,
+			EBgrPriority.Low => GamesToRedeemInBackgroundLow,
+			_ => GamesToRedeemInBackground
+		};
+
+		lock (targetQueue) {
 			foreach ((string key, string name) in games) {
 				if (!IsValidGameToRedeemInBackground(key, name)) {
 					throw new InvalidOperationException(nameof(IsValidGameToRedeemInBackground));
 				}
 
-				GamesToRedeemInBackground[key] = name;
+				targetQueue[key] = name;
 			}
 		}
 
@@ -322,15 +358,32 @@ public sealed class BotDatabase : GenericDatabase {
 	}
 
 	internal void ClearGamesToRedeemInBackground() {
-		lock (GamesToRedeemInBackground) {
-			if (GamesToRedeemInBackground.Count == 0) {
-				return;
-			}
+		bool changed = false;
 
-			GamesToRedeemInBackground.Clear();
+		lock (GamesToRedeemInBackgroundHigh) {
+			if (GamesToRedeemInBackgroundHigh.Count > 0) {
+				GamesToRedeemInBackgroundHigh.Clear();
+				changed = true;
+			}
 		}
 
-		Utilities.InBackground(Save);
+		lock (GamesToRedeemInBackground) {
+			if (GamesToRedeemInBackground.Count > 0) {
+				GamesToRedeemInBackground.Clear();
+				changed = true;
+			}
+		}
+
+		lock (GamesToRedeemInBackgroundLow) {
+			if (GamesToRedeemInBackgroundLow.Count > 0) {
+				GamesToRedeemInBackgroundLow.Clear();
+				changed = true;
+			}
+		}
+
+		if (changed) {
+			Utilities.InBackground(Save);
+		}
 	}
 
 	internal static async Task<BotDatabase?> CreateOrLoad(string filePath) {
@@ -380,8 +433,23 @@ public sealed class BotDatabase : GenericDatabase {
 	}
 
 	internal (string? Key, string? Name) GetGameToRedeemInBackground() {
+		// Check high priority queue first
+		lock (GamesToRedeemInBackgroundHigh) {
+			foreach ((string key, string name) in GamesToRedeemInBackgroundHigh) {
+				return (key, name);
+			}
+		}
+
+		// Then check normal priority queue
 		lock (GamesToRedeemInBackground) {
 			foreach ((string key, string name) in GamesToRedeemInBackground) {
+				return (key, name);
+			}
+		}
+
+		// Finally check low priority queue
+		lock (GamesToRedeemInBackgroundLow) {
+			foreach ((string key, string name) in GamesToRedeemInBackgroundLow) {
 				return (key, name);
 			}
 		}
@@ -402,16 +470,50 @@ public sealed class BotDatabase : GenericDatabase {
 	internal void RemoveGameToRedeemInBackground(string key) {
 		ArgumentException.ThrowIfNullOrEmpty(key);
 
-		lock (GamesToRedeemInBackground) {
-			if (!GamesToRedeemInBackground.Remove(key)) {
-				return;
+		bool removed = false;
+
+		lock (GamesToRedeemInBackgroundHigh) {
+			if (GamesToRedeemInBackgroundHigh.Remove(key)) {
+				removed = true;
 			}
 		}
 
-		Utilities.InBackground(Save);
+		if (!removed) {
+			lock (GamesToRedeemInBackground) {
+				if (GamesToRedeemInBackground.Remove(key)) {
+					removed = true;
+				}
+			}
+		}
+
+		if (!removed) {
+			lock (GamesToRedeemInBackgroundLow) {
+				if (GamesToRedeemInBackgroundLow.Remove(key)) {
+					removed = true;
+				}
+			}
+		}
+
+		if (removed) {
+			Utilities.InBackground(Save);
+		}
 	}
 
-	private (bool Valid, string? ErrorMessage) CheckValidation() => GamesToRedeemInBackground.Any(static entry => !IsValidGameToRedeemInBackground(entry.Key, entry.Value)) ? (false, Strings.FormatErrorConfigPropertyInvalid(nameof(GamesToRedeemInBackground), string.Join("", GamesToRedeemInBackground))) : (true, null);
+	private (bool Valid, string? ErrorMessage) CheckValidation() {
+		if (GamesToRedeemInBackgroundHigh.Any(static entry => !IsValidGameToRedeemInBackground(entry.Key, entry.Value))) {
+			return (false, Strings.FormatErrorConfigPropertyInvalid(nameof(GamesToRedeemInBackgroundHigh), string.Join("", GamesToRedeemInBackgroundHigh)));
+		}
+
+		if (GamesToRedeemInBackground.Any(static entry => !IsValidGameToRedeemInBackground(entry.Key, entry.Value))) {
+			return (false, Strings.FormatErrorConfigPropertyInvalid(nameof(GamesToRedeemInBackground), string.Join("", GamesToRedeemInBackground)));
+		}
+
+		if (GamesToRedeemInBackgroundLow.Any(static entry => !IsValidGameToRedeemInBackground(entry.Key, entry.Value))) {
+			return (false, Strings.FormatErrorConfigPropertyInvalid(nameof(GamesToRedeemInBackgroundLow), string.Join("", GamesToRedeemInBackgroundLow)));
+		}
+
+		return (true, null);
+	}
 
 	private async void OnObjectModified(object? sender, EventArgs e) {
 		if (string.IsNullOrEmpty(FilePath)) {
