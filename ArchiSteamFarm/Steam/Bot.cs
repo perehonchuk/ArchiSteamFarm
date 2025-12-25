@@ -3537,6 +3537,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 	private void OnTradeCheckTimer(object? state = null) {
 		if (IsConnectedAndLoggedOn) {
+			ArchiLogger.LogGenericTrace("Trade check timer fired, scanning for pending trades with prioritization");
 			Utilities.InBackground(Trading.OnNewTrade);
 		}
 	}
@@ -3578,6 +3579,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 					break;
 				case UserNotificationsCallback.EUserNotification.Trading when newNotification && !BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.DisableIncomingTradesParsing):
+					ArchiLogger.LogGenericInfo($"Received trade notification, initiating prioritized trade processing");
 					Utilities.InBackground(Trading.OnNewTrade);
 
 					break;

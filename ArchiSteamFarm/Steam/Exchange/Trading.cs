@@ -290,7 +290,34 @@ public sealed class Trading : IDisposable {
 
 			HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets = [];
 
-			IEnumerable<Task<ParseTradeResult>> tasks = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID)).Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
+			// Prioritize trade offers: donation trades first, then regular trades
+			// This ensures that trades where we receive more items are processed with higher priority
+			List<TradeOffer> activeTradeOffers = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID)).ToList();
+
+			// Separate donation trades from regular trades
+			List<TradeOffer> donationTrades = [];
+			List<TradeOffer> regularTrades = [];
+
+			foreach (TradeOffer tradeOffer in activeTradeOffers) {
+				uint itemsToReceiveCount = tradeOffer.ItemsToReceive.Sum(static item => item.Amount);
+				uint itemsToGiveCount = tradeOffer.ItemsToGive.Sum(static item => item.Amount);
+
+				if (itemsToReceiveCount > itemsToGiveCount) {
+					donationTrades.Add(tradeOffer);
+				} else {
+					regularTrades.Add(tradeOffer);
+				}
+			}
+
+			// Log prioritization info if we have both types
+			if ((donationTrades.Count > 0) && (regularTrades.Count > 0)) {
+				Bot.ArchiLogger.LogGenericInfo($"Processing {donationTrades.Count} donation trade(s) before {regularTrades.Count} regular trade(s)");
+			}
+
+			// Process donation trades first, then regular trades
+			List<TradeOffer> prioritizedTradeOffers = [.. donationTrades, .. regularTrades];
+
+			IEnumerable<Task<ParseTradeResult>> tasks = prioritizedTradeOffers.Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
 
 			IList<ParseTradeResult> tradeResults = await Utilities.InParallel(tasks).ConfigureAwait(false);
 
