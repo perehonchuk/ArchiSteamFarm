@@ -54,6 +54,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
+	private const byte SimpleBatchSize = 3; // Maximum number of games to farm simultaneously in Simple algorithm batch mode
+	private const byte SimpleBatchCardThreshold = 5; // Games with <= this many cards will be batched together in Simple algorithm
 
 	[PublicAPI]
 	public static readonly FrozenSet<uint> SalesBlacklist = [267420, 303700, 335590, 368020, 425280, 480730, 566020, 639900, 762800, 876740, 991980, 1195670, 1343890, 1465680, 1658760, 1797760, 2021850, 2243720, 2459330, 2640280, 2861690, 2861720, 3558920];
@@ -850,26 +852,66 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 					}
 				}
 			} else {
-				// If we have unrestricted card drops, we use simple algorithm
+				// If we have unrestricted card drops, we use simple algorithm with batching
 				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Simple"));
 
 				while (GamesToFarm.Count > 0) {
-					// In simple algorithm we're going to farm anything that is playable, regardless of hours
-					Game game = GamesToFarm.First();
+					// In simple algorithm, we try to batch games with similar characteristics
+					Game firstGame = GamesToFarm.First();
 
-					if (!await IsPlayableGame(game).ConfigureAwait(false)) {
-						GamesToFarm.Remove(game);
+					if (!await IsPlayableGame(firstGame).ConfigureAwait(false)) {
+						GamesToFarm.Remove(firstGame);
 
 						continue;
 					}
 
-					if (await FarmSolo(game).ConfigureAwait(false)) {
-						continue;
+					// Check if we should batch this game with others
+					HashSet<Game> batchGames = [];
+
+					if (firstGame.CardsRemaining <= SimpleBatchCardThreshold && GamesToFarm.Count > 1) {
+						// This game is eligible for batching - gather similar games
+						batchGames.Add(firstGame);
+
+						foreach (Game candidateGame in GamesToFarm.AsLinqThreadSafeEnumerable().Skip(1).ToList()) {
+							if (batchGames.Count >= SimpleBatchSize) {
+								break;
+							}
+
+							if (candidateGame.CardsRemaining <= SimpleBatchCardThreshold) {
+								if (await IsPlayableGame(candidateGame).ConfigureAwait(false)) {
+									batchGames.Add(candidateGame);
+								} else {
+									GamesToFarm.Remove(candidateGame);
+								}
+							}
+						}
 					}
 
-					NowFarming = false;
+					// Farm batch or solo depending on what we gathered
+					if (batchGames.Count > 1) {
+						Bot.ArchiLogger.LogGenericInfo(Strings.FormatNowIdlingList(string.Join(", ", batchGames.Select(static game => $"{game.AppID} ({game.CardsRemaining} cards)"))));
 
-					return;
+						// Track batch farming statistics
+						Bot.BotDatabase.SimpleBatchFarmingSessionCount++;
+
+						if (await FarmMultiple(batchGames).ConfigureAwait(false)) {
+							Bot.ArchiLogger.LogGenericInfo(Strings.FormatIdlingFinishedForGames(string.Join(", ", batchGames.Select(static game => game.AppID))));
+						} else {
+							NowFarming = false;
+							GamesToFarm.Clear();
+
+							return;
+						}
+					} else {
+						// Farm solo if batching not applicable
+						if (await FarmSolo(firstGame).ConfigureAwait(false)) {
+							continue;
+						}
+
+						NowFarming = false;
+
+						return;
+					}
 				}
 			}
 		} while ((await IsAnythingToFarm().ConfigureAwait(false)).GetValueOrDefault());

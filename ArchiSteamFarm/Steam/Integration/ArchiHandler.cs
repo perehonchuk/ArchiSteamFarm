@@ -54,6 +54,7 @@ namespace ArchiSteamFarm.Steam.Integration;
 
 public sealed class ArchiHandler : ClientMsgHandler, IDisposable {
 	internal const byte MaxGamesPlayedConcurrently = 32; // This is limit introduced by Steam Network
+	internal const byte RecommendedBatchGamesLimit = 5; // Recommended limit for batch farming to avoid excessive Steam API calls
 
 	private readonly ArchiLogger ArchiLogger;
 	private readonly SemaphoreSlim InventorySemaphore = new(1, 1);
