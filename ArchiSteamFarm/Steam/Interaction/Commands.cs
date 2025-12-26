@@ -1153,8 +1153,18 @@ public sealed class Commands {
 		}
 
 		uint count = Bot.GamesToRedeemInBackgroundCount;
+		string response = Strings.FormatBotGamesToRedeemInBackgroundCount(count);
 
-		return FormatBotResponse(Strings.FormatBotGamesToRedeemInBackgroundCount(count));
+		// Provide additional information about queue composition
+		if (count > 0) {
+			(uint walletCodes, uint gameKeys) = Bot.BotDatabase.GetGamesToRedeemInBackgroundComposition();
+
+			if ((walletCodes > 0) && (gameKeys > 0)) {
+				response += $" ({walletCodes} wallet code(s) will be processed before {gameKeys} game key(s))";
+			}
+		}
+
+		return FormatBotResponse(response);
 	}
 
 	private static async Task<string?> ResponseBackgroundGamesRedeemer(EAccess access, string botNames, ulong steamID = 0) {

@@ -381,6 +381,14 @@ public sealed class BotDatabase : GenericDatabase {
 
 	internal (string? Key, string? Name) GetGameToRedeemInBackground() {
 		lock (GamesToRedeemInBackground) {
+			// First, try to find a wallet code (they have different rate limit behavior)
+			foreach ((string key, string name) in GamesToRedeemInBackground) {
+				if (IsLikelyWalletCode(key)) {
+					return (key, name);
+				}
+			}
+
+			// If no wallet codes, return the first game key
 			foreach ((string key, string name) in GamesToRedeemInBackground) {
 				return (key, name);
 			}
@@ -389,7 +397,38 @@ public sealed class BotDatabase : GenericDatabase {
 		return (null, null);
 	}
 
+	internal (uint WalletCodes, uint GameKeys) GetGamesToRedeemInBackgroundComposition() {
+		uint walletCodes = 0;
+		uint gameKeys = 0;
+
+		lock (GamesToRedeemInBackground) {
+			foreach ((string key, _) in GamesToRedeemInBackground) {
+				if (IsLikelyWalletCode(key)) {
+					walletCodes++;
+				} else {
+					gameKeys++;
+				}
+			}
+		}
+
+		return (walletCodes, gameKeys);
+	}
+
 	internal static bool IsValidGameToRedeemInBackground(string key, string name) => !string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(name) && Utilities.IsValidCdKey(key);
+
+	private static bool IsLikelyWalletCode(string key) {
+		// Wallet codes typically don't follow the standard XXXXX-XXXXX-XXXXX pattern
+		// They're usually longer and don't have dashes, or have different formatting
+		// This is a heuristic - we check if the key has fewer dashes than a standard game key
+		ArgumentException.ThrowIfNullOrEmpty(key);
+
+		int dashCount = key.Count(static c => c == '-');
+
+		// Standard game keys usually have 2 or 4 dashes (XXXXX-XXXXX-XXXXX or XXXX-XXXX-XXXX-XXXX)
+		// Wallet codes often have 0, 1, or a different number of dashes
+		// Prioritize keys that don't match the standard pattern
+		return dashCount != 2 && dashCount != 4;
+	}
 
 	internal void PerformMaintenance() {
 		DateTime now = DateTime.UtcNow;
