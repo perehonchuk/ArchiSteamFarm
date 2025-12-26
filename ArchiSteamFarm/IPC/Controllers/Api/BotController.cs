@@ -259,6 +259,28 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse<IReadOnlyDictionary<string, OrderedDictionary<string, string>>>(result));
 	}
 
+	[EndpointSummary("Fetches command audit log for given bots")]
+	[HttpGet("{botNames:required}/CommandAuditLog")]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, IReadOnlyCollection<Steam.Interaction.Commands.CommandAuditEntry>>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	public ActionResult<GenericResponse> CommandAuditLogGet(string botNames) {
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
+		}
+
+		Dictionary<string, IReadOnlyCollection<Steam.Interaction.Commands.CommandAuditEntry>> result = new(bots.Count, Bot.BotsComparer);
+
+		foreach (Bot bot in bots) {
+			result[bot.BotName] = bot.Commands.GetCommandAuditLog();
+		}
+
+		return Ok(new GenericResponse<IReadOnlyDictionary<string, IReadOnlyCollection<Steam.Interaction.Commands.CommandAuditEntry>>>(result));
+	}
+
 	[EndpointSummary("Provides input value to given bot for next usage")]
 	[HttpPost("{botNames:required}/Input")]
 	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]

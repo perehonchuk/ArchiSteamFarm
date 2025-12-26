@@ -48,14 +48,45 @@ namespace ArchiSteamFarm.Steam.Interaction;
 
 public sealed class Commands {
 	private const ushort SteamTypingStatusDelay = 10 * 1000; // Steam client broadcasts typing status each 10 seconds
+	private const byte MaxCommandAuditLogEntries = 100; // Maximum number of command audit log entries to keep in memory
 
 	private readonly Bot Bot;
 	private readonly Dictionary<uint, string> CachedGamesOwned = new();
+	private readonly Queue<CommandAuditEntry> CommandAuditLog = new();
+	private readonly object CommandAuditLogLock = new();
 
 	internal Commands(Bot bot) {
 		ArgumentNullException.ThrowIfNull(bot);
 
 		Bot = bot;
+	}
+
+	internal sealed record CommandAuditEntry(DateTime Timestamp, ulong SteamID, EAccess Access, string Command, bool Success, string? Response);
+
+	private void LogCommandExecution(ulong steamID, EAccess access, string command, bool success, string? response) {
+		// Truncate command and response for logging
+		string sanitizedCommand = command.Length > 100 ? command[..100] + "..." : command;
+		string? sanitizedResponse = response != null && response.Length > 200 ? response[..200] + "..." : response;
+
+		var entry = new CommandAuditEntry(DateTime.UtcNow, steamID, access, sanitizedCommand, success, sanitizedResponse);
+
+		lock (CommandAuditLogLock) {
+			CommandAuditLog.Enqueue(entry);
+
+			// Maintain maximum log size
+			while (CommandAuditLog.Count > MaxCommandAuditLogEntries) {
+				CommandAuditLog.Dequeue();
+			}
+		}
+
+		// Log to NLog with audit-specific event properties for filtering
+		Bot.ArchiLogger.Info($"Command audit: User={steamID} Access={access} Command={sanitizedCommand} Success={success}");
+	}
+
+	internal IReadOnlyCollection<CommandAuditEntry> GetCommandAuditLog() {
+		lock (CommandAuditLogLock) {
+			return CommandAuditLog.ToList().AsReadOnly();
+		}
 	}
 
 	[PublicAPI]
@@ -419,13 +450,21 @@ public sealed class Commands {
 
 		string? response = await responseTask.ConfigureAwait(false);
 
+		bool commandSuccess = !string.IsNullOrEmpty(response);
+
 		if (string.IsNullOrEmpty(response)) {
 			if (!feedback) {
+				// Log failed command execution (access denied or no response)
+				LogCommandExecution(steamID, access, message, false, null);
+
 				return;
 			}
 
 			response = FormatBotResponse(Strings.ErrorAccessDenied);
 		}
+
+		// Log successful command execution with response
+		LogCommandExecution(steamID, access, message, commandSuccess, response);
 
 		if (!await Bot.SendMessage(steamID, response).ConfigureAwait(false)) {
 			Bot.ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(Bot.SendMessage)));
@@ -489,13 +528,21 @@ public sealed class Commands {
 
 		string? response = await responseTask.ConfigureAwait(false);
 
+		bool commandSuccess = !string.IsNullOrEmpty(response);
+
 		if (string.IsNullOrEmpty(response)) {
 			if (!feedback) {
+				// Log failed command execution (access denied or no response)
+				LogCommandExecution(steamID, access, message, false, null);
+
 				return;
 			}
 
 			response = FormatBotResponse(Strings.ErrorAccessDenied);
 		}
+
+		// Log successful command execution with response
+		LogCommandExecution(steamID, access, message, commandSuccess, response);
 
 		if (!await Bot.SendMessage(chatGroupID, chatID, response).ConfigureAwait(false)) {
 			Bot.ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(Bot.SendMessage)));
