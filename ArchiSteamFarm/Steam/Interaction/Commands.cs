@@ -3222,6 +3222,10 @@ public sealed class Commands {
 			return (null, Bot);
 		}
 
+		if (!Bot.BotConfig.Enabled) {
+			return (FormatBotResponse(Strings.BotStatusNotRunning + " (Disabled in config)"), Bot);
+		}
+
 		if (!Bot.IsConnectedAndLoggedOn) {
 			return (FormatBotResponse(Bot.KeepRunning ? Strings.BotStatusConnecting : Strings.BotStatusNotRunning), Bot);
 		}
