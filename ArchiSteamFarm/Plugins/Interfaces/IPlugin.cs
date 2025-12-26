@@ -49,6 +49,16 @@ public interface IPlugin {
 	public Version Version { get; }
 
 	/// <summary>
+	///     ASF will use this property to determine the execution order of plugins.
+	///     Plugins with lower priority values execute before plugins with higher priority values.
+	///     Default priority is 100. Official plugins use priority 50.
+	///     Use lower values (0-49) to execute before official plugins, or higher values (101+) to execute after most custom plugins.
+	/// </summary>
+	/// <returns>Priority value for plugin execution ordering. Lower values = higher priority (execute first).</returns>
+	[JsonInclude]
+	public byte Priority => 100;
+
+	/// <summary>
 	///     ASF will call this method right after plugin initialization.
 	/// </summary>
 	public Task OnLoaded();

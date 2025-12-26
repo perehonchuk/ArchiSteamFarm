@@ -30,6 +30,7 @@ namespace ArchiSteamFarm.Plugins;
 internal abstract class OfficialPlugin : IPlugin {
 	public abstract string Name { get; }
 	public abstract Version Version { get; }
+	public byte Priority => 50; // Official plugins execute before custom plugins (default 100)
 	public abstract Task OnLoaded();
 
 	internal bool HasSameVersion() => Version == SharedInfo.Version;

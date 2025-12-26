@@ -239,7 +239,7 @@ public static class PluginsCore {
 
 		foreach (IPlugin plugin in activePlugins) {
 			try {
-				ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoading(plugin.Name, plugin.Version));
+				ASF.ArchiLogger.LogGenericInfo($"{Strings.FormatPluginLoading(plugin.Name, plugin.Version)} [Priority: {plugin.Priority}]");
 
 				if (!Program.IgnoreUnsupportedEnvironment && plugin is OfficialPlugin officialPlugin && !officialPlugin.HasSameVersion()) {
 					ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnsupportedOfficialPlugins(plugin.Name, plugin.Version, SharedInfo.Version));
@@ -268,7 +268,11 @@ public static class PluginsCore {
 			return true;
 		}
 
-		ActivePlugins = activePlugins.ToFrozenSet();
+		// Sort plugins by priority (lower priority value = executes first)
+		// This ensures plugins are executed in a deterministic order based on their priority values
+		List<IPlugin> sortedPlugins = activePlugins.OrderBy(static plugin => plugin.Priority).ThenBy(static plugin => plugin.Name).ToList();
+
+		ActivePlugins = sortedPlugins.ToFrozenSet();
 
 		if (HasCustomPluginsLoaded) {
 			ASF.ArchiLogger.LogGenericInfo(Strings.PluginsWarning);
@@ -377,10 +381,13 @@ public static class PluginsCore {
 			return null;
 		}
 
+		// Execute plugins in priority order (lower priority value = executes first)
+		IEnumerable<IBotCommand2> orderedPlugins = ActivePlugins.OfType<IBotCommand2>().OrderBy(static plugin => plugin.Priority).ThenBy(static plugin => plugin.Name);
+
 		IList<string?> responses;
 
 		try {
-			responses = await Utilities.InParallel(ActivePlugins.OfType<IBotCommand2>().Select(plugin => plugin.OnBotCommand(bot, access, message, args, steamID))).ConfigureAwait(false);
+			responses = await Utilities.InParallel(orderedPlugins.Select(plugin => plugin.OnBotCommand(bot, access, message, args, steamID))).ConfigureAwait(false);
 		} catch (Exception e) {
 			ASF.ArchiLogger.LogGenericException(e);
 
@@ -397,8 +404,11 @@ public static class PluginsCore {
 			return;
 		}
 
+		// Execute plugins in reverse priority order for cleanup (higher priority value = executes first on destroy)
+		IEnumerable<IBot> orderedPlugins = ActivePlugins.OfType<IBot>().OrderByDescending(static plugin => plugin.Priority).ThenByDescending(static plugin => plugin.Name);
+
 		try {
-			await Utilities.InParallel(ActivePlugins.OfType<IBot>().Select(plugin => plugin.OnBotDestroy(bot))).ConfigureAwait(false);
+			await Utilities.InParallel(orderedPlugins.Select(plugin => plugin.OnBotDestroy(bot))).ConfigureAwait(false);
 		} catch (Exception e) {
 			ASF.ArchiLogger.LogGenericException(e);
 		}
@@ -491,8 +501,11 @@ public static class PluginsCore {
 			return;
 		}
 
+		// Execute plugins in priority order (lower priority value = executes first)
+		IEnumerable<IBot> orderedPlugins = ActivePlugins.OfType<IBot>().OrderBy(static plugin => plugin.Priority).ThenBy(static plugin => plugin.Name);
+
 		try {
-			await Utilities.InParallel(ActivePlugins.OfType<IBot>().Select(plugin => plugin.OnBotInit(bot))).ConfigureAwait(false);
+			await Utilities.InParallel(orderedPlugins.Select(plugin => plugin.OnBotInit(bot))).ConfigureAwait(false);
 		} catch (Exception e) {
 			ASF.ArchiLogger.LogGenericException(e);
 		}
@@ -539,10 +552,13 @@ public static class PluginsCore {
 			return null;
 		}
 
+		// Execute plugins in priority order (lower priority value = executes first)
+		IEnumerable<IBotMessage> orderedPlugins = ActivePlugins.OfType<IBotMessage>().OrderBy(static plugin => plugin.Priority).ThenBy(static plugin => plugin.Name);
+
 		IList<string?> responses;
 
 		try {
-			responses = await Utilities.InParallel(ActivePlugins.OfType<IBotMessage>().Select(plugin => plugin.OnBotMessage(bot, steamID, message))).ConfigureAwait(false);
+			responses = await Utilities.InParallel(orderedPlugins.Select(plugin => plugin.OnBotMessage(bot, steamID, message))).ConfigureAwait(false);
 		} catch (Exception e) {
 			ASF.ArchiLogger.LogGenericException(e);
 
