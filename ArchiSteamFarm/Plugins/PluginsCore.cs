@@ -235,11 +235,16 @@ public static class PluginsCore {
 			return true;
 		}
 
+		// Sort plugins by LoadPriority (ascending order - lower values load first)
+		List<IPlugin> sortedPlugins = activePlugins.OrderBy(static plugin => plugin.LoadPriority).ThenBy(static plugin => plugin.Name).ToList();
+
+		ASF.ArchiLogger.LogGenericInfo($"Loading {sortedPlugins.Count} plugin(s) in priority order...");
+
 		HashSet<IPlugin> invalidPlugins = [];
 
-		foreach (IPlugin plugin in activePlugins) {
+		foreach (IPlugin plugin in sortedPlugins) {
 			try {
-				ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoading(plugin.Name, plugin.Version));
+				ASF.ArchiLogger.LogGenericInfo($"{Strings.FormatPluginLoading(plugin.Name, plugin.Version)} (Priority: {plugin.LoadPriority})");
 
 				if (!Program.IgnoreUnsupportedEnvironment && plugin is OfficialPlugin officialPlugin && !officialPlugin.HasSameVersion()) {
 					ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnsupportedOfficialPlugins(plugin.Name, plugin.Version, SharedInfo.Version));
@@ -261,14 +266,15 @@ public static class PluginsCore {
 		if (invalidPlugins.Count > 0) {
 			await Task.Delay(SharedInfo.InformationDelay).ConfigureAwait(false);
 
-			activePlugins.ExceptWith(invalidPlugins);
+			sortedPlugins.RemoveAll(plugin => invalidPlugins.Contains(plugin));
 		}
 
-		if (activePlugins.Count == 0) {
+		if (sortedPlugins.Count == 0) {
 			return true;
 		}
 
-		ActivePlugins = activePlugins.ToFrozenSet();
+		// Store plugins in priority order for consistent execution order
+		ActivePlugins = sortedPlugins.ToFrozenSet();
 
 		if (HasCustomPluginsLoaded) {
 			ASF.ArchiLogger.LogGenericInfo(Strings.PluginsWarning);
@@ -282,7 +288,7 @@ public static class PluginsCore {
 
 		HashSet<IPluginUpdates> activePluginUpdates = [];
 
-		foreach (IPluginUpdates plugin in activePlugins.OfType<IPluginUpdates>()) {
+		foreach (IPluginUpdates plugin in sortedPlugins.OfType<IPluginUpdates>()) {
 			string? pluginAssemblyName = plugin.GetType().Assembly.GetName().Name;
 
 			if (string.IsNullOrEmpty(pluginAssemblyName)) {

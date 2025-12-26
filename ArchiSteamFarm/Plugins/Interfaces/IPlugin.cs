@@ -49,6 +49,17 @@ public interface IPlugin {
 	public Version Version { get; }
 
 	/// <summary>
+	///     ASF will use this property to determine plugin loading order.
+	///     Plugins are loaded in ascending priority order (lower values load first).
+	///     Default priority is 100. Use lower values (e.g., 50) to load before most plugins,
+	///     or higher values (e.g., 150) to load after most plugins.
+	///     This allows plugins to depend on initialization order.
+	/// </summary>
+	/// <returns>Priority value for loading order. Default is 100.</returns>
+	[JsonInclude]
+	public int LoadPriority => 100;
+
+	/// <summary>
 	///     ASF will call this method right after plugin initialization.
 	/// </summary>
 	public Task OnLoaded();

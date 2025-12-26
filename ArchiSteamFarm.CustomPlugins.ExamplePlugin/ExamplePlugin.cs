@@ -57,6 +57,12 @@ internal sealed class ExamplePlugin : IASF, IBot, IBotCommand2, IBotConnection, 
 	[JsonInclude]
 	public Version Version => typeof(ExamplePlugin).Assembly.GetName().Version ?? throw new InvalidOperationException(nameof(Version));
 
+	// LoadPriority determines when this plugin loads relative to others. Lower values load first.
+	// Default is 100. Use 50 to load early (before most plugins) or 150 to load late (after most plugins).
+	// This example uses 100 (default priority).
+	[JsonInclude]
+	public int LoadPriority => 100;
+
 	// Plugins can expose custom properties for our GET /Api/Plugins API call, simply annotate them with [JsonInclude] (or keep public)
 	[JsonInclude]
 	[JsonRequired]
