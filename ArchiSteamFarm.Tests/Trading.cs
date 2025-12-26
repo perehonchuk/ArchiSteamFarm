@@ -514,6 +514,49 @@ internal sealed class Trading {
 		Assert.IsTrue(IsTradeNeutralOrBetter(inventory, itemsToGive, itemsToReceive));
 	}
 
+	[TestMethod]
+	internal void FoilCardsHaveHigherPriorityScore() {
+		var foilSet = (realAppID: 730u, type: EAssetType.FoilTradingCard, rarity: EAssetRarity.Common);
+		var normalSet = (realAppID: 730u, type: EAssetType.TradingCard, rarity: EAssetRarity.Common);
+
+		int foilScore = GetSetPriorityScore(foilSet);
+		int normalScore = GetSetPriorityScore(normalSet);
+
+		Assert.IsTrue(foilScore > normalScore);
+	}
+
+	[TestMethod]
+	internal void RareCardsHaveHigherPriorityScore() {
+		var rareSet = (realAppID: 730u, type: EAssetType.TradingCard, rarity: EAssetRarity.Rare);
+		var commonSet = (realAppID: 730u, type: EAssetType.TradingCard, rarity: EAssetRarity.Common);
+
+		int rareScore = GetSetPriorityScore(rareSet);
+		int commonScore = GetSetPriorityScore(commonSet);
+
+		Assert.IsTrue(rareScore > commonScore);
+	}
+
+	[TestMethod]
+	internal void TradePriorityScoreCalculatesCorrectly() {
+		HashSet<Asset> inventory = [
+			CreateItem(1, amount: 5, type: EAssetType.TradingCard),
+			CreateItem(2, amount: 3, type: EAssetType.TradingCard)
+		];
+
+		HashSet<Asset> itemsToGive = [
+			CreateItem(1, amount: 2, type: EAssetType.TradingCard)
+		];
+
+		HashSet<Asset> itemsToReceive = [
+			CreateItem(3, amount: 2, type: EAssetType.FoilTradingCard)
+		];
+
+		int score = GetTradePriorityScore(inventory, itemsToGive, itemsToReceive);
+
+		// Should be positive since we're receiving foils (higher priority)
+		Assert.IsTrue(score > 0);
+	}
+
 	private static Asset CreateItem(ulong classID, ulong instanceID = 0, uint amount = 1, bool marketable = false, bool tradable = false, uint realAppID = Asset.SteamAppID, EAssetType type = EAssetType.TradingCard, EAssetRarity rarity = EAssetRarity.Common) => new(Asset.SteamAppID, Asset.SteamCommunityContextID, classID, amount, new InventoryDescription(Asset.SteamAppID, classID, instanceID, marketable, tradable, realAppID, type, rarity));
 }
 #pragma warning restore CA1812 // False positive, the class is used during MSTest

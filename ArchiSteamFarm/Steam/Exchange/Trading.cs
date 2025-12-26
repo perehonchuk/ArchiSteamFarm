@@ -113,6 +113,69 @@ public sealed class Trading : IDisposable {
 	}
 
 	[PublicAPI]
+	public static int GetSetPriorityScore((uint RealAppID, EAssetType Type, EAssetRarity Rarity) set) {
+		// Calculate priority score based on set characteristics
+		// Higher rarity items get higher priority
+		int score = 0;
+
+		// Rarity-based scoring
+		score += set.Rarity switch {
+			EAssetRarity.Common => 1,
+			EAssetRarity.Uncommon => 2,
+			EAssetRarity.Rare => 3,
+			_ => 0
+		};
+
+		// Type-based scoring - foil cards are more valuable
+		score += set.Type switch {
+			EAssetType.FoilTradingCard => 5,
+			EAssetType.TradingCard => 1,
+			_ => 0
+		};
+
+		return score;
+	}
+
+	[PublicAPI]
+	public static int GetTradePriorityScore(IReadOnlyCollection<Asset> inventory, IReadOnlyCollection<Asset> itemsToGive, IReadOnlyCollection<Asset> itemsToReceive) {
+		if ((inventory == null) || (inventory.Count == 0)) {
+			throw new ArgumentNullException(nameof(inventory));
+		}
+
+		if ((itemsToGive == null) || (itemsToGive.Count == 0)) {
+			throw new ArgumentNullException(nameof(itemsToGive));
+		}
+
+		if ((itemsToReceive == null) || (itemsToReceive.Count == 0)) {
+			throw new ArgumentNullException(nameof(itemsToReceive));
+		}
+
+		// Calculate weighted priority score for the trade
+		// Positive scores indicate trades that help complete high-priority sets
+		// Negative scores indicate trades that hurt high-priority set completion
+
+		int totalScore = 0;
+
+		// Group items by set
+		HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> receiveSets = itemsToReceive.Select(static item => (item.RealAppID, item.Type, item.Rarity)).ToHashSet();
+		HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> giveSets = itemsToGive.Select(static item => (item.RealAppID, item.Type, item.Rarity)).ToHashSet();
+
+		// Add score for receiving items from priority sets
+		foreach ((uint RealAppID, EAssetType Type, EAssetRarity Rarity) set in receiveSets) {
+			int setPriority = GetSetPriorityScore(set);
+			totalScore += setPriority * 2; // Receiving is weighted higher
+		}
+
+		// Subtract score for giving away items from priority sets
+		foreach ((uint RealAppID, EAssetType Type, EAssetRarity Rarity) set in giveSets) {
+			int setPriority = GetSetPriorityScore(set);
+			totalScore -= setPriority;
+		}
+
+		return totalScore;
+	}
+
+	[PublicAPI]
 	public static bool IsTradeNeutralOrBetter(IReadOnlyCollection<Asset> inventory, IReadOnlyCollection<Asset> itemsToGive, IReadOnlyCollection<Asset> itemsToReceive) {
 		if ((inventory == null) || (inventory.Count == 0)) {
 			throw new ArgumentNullException(nameof(inventory));
@@ -177,7 +240,9 @@ public sealed class Trading : IDisposable {
 		// Now we can get final sets state of our inventory after the exchange
 		Dictionary<(uint RealAppID, EAssetType Type, EAssetRarity Rarity), List<uint>> finalSets = GetInventorySets(inventoryState);
 
-		// Once we have both states, we can check overall fairness
+		// Once we have both states, we can check overall fairness with priority weighting
+		int totalPriorityWeightedProgress = 0;
+
 		foreach (((uint RealAppID, EAssetType Type, EAssetRarity Rarity) set, List<uint> beforeAmounts) in initialSets) {
 			if (!finalSets.TryGetValue(set, out List<uint>? afterAmounts)) {
 				// If we have no info about this set, then it has to be a bad one
@@ -206,6 +271,22 @@ public sealed class Trading : IDisposable {
 				if (neutrality < 0) {
 					return false;
 				}
+			}
+
+			// Apply priority weighting to the neutrality calculation
+			// Higher priority sets contribute more to the overall trade value
+			int setPriority = GetSetPriorityScore(set);
+			int weightedProgress = neutrality * setPriority;
+			totalPriorityWeightedProgress += weightedProgress;
+		}
+
+		// Check newly acquired sets from the trade (sets not in initial inventory)
+		foreach (((uint RealAppID, EAssetType Type, EAssetRarity Rarity) set, List<uint> afterAmounts) in finalSets) {
+			if (!initialSets.ContainsKey(set)) {
+				// New set acquired - calculate its priority contribution
+				int setPriority = GetSetPriorityScore(set);
+				int setSize = afterAmounts.Sum(static amount => unchecked((int) amount));
+				totalPriorityWeightedProgress += setSize * setPriority;
 			}
 		}
 
@@ -567,6 +648,10 @@ public sealed class Trading : IDisposable {
 		}
 
 		bool accept = IsTradeNeutralOrBetter(inventory, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive);
+
+		// Calculate and log priority score for trade evaluation
+		int priorityScore = GetTradePriorityScore(inventory, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive);
+		Bot.ArchiLogger.LogGenericDebug($"Trade {tradeOffer.TradeOfferID} priority score: {priorityScore}");
 
 		// We're now sure whether the trade is neutral+ for us or not
 		ParseTradeResult.EResult acceptResult;
