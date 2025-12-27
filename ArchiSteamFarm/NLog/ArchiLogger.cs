@@ -69,7 +69,13 @@ public sealed class ArchiLogger {
 		ArgumentException.ThrowIfNullOrEmpty(message);
 		ArgumentException.ThrowIfNullOrEmpty(previousMethodName);
 
-		Logger.Error($"{previousMethodName}() {message}");
+		LogEventInfo logEventInfo = new(LogLevel.Error, Logger.Name, $"{previousMethodName}() {message}") {
+			Properties = {
+				["SeverityCategory"] = "Error"
+			}
+		};
+
+		Logger.Log(logEventInfo);
 	}
 
 	[PublicAPI]
@@ -77,7 +83,13 @@ public sealed class ArchiLogger {
 		ArgumentNullException.ThrowIfNull(exception);
 		ArgumentException.ThrowIfNullOrEmpty(previousMethodName);
 
-		Logger.Error(exception, $"{previousMethodName}()");
+		LogEventInfo logEventInfo = new(LogLevel.Error, Logger.Name, exception, null, $"{previousMethodName}()") {
+			Properties = {
+				["SeverityCategory"] = "Exception"
+			}
+		};
+
+		Logger.Log(logEventInfo);
 	}
 
 	[PublicAPI]
@@ -101,7 +113,13 @@ public sealed class ArchiLogger {
 		ArgumentException.ThrowIfNullOrEmpty(message);
 		ArgumentException.ThrowIfNullOrEmpty(previousMethodName);
 
-		Logger.Warn($"{previousMethodName}() {message}");
+		LogEventInfo logEventInfo = new(LogLevel.Warn, Logger.Name, $"{previousMethodName}() {message}") {
+			Properties = {
+				["SeverityCategory"] = "Warning"
+			}
+		};
+
+		Logger.Log(logEventInfo);
 	}
 
 	[PublicAPI]
@@ -109,7 +127,13 @@ public sealed class ArchiLogger {
 		ArgumentNullException.ThrowIfNull(exception);
 		ArgumentException.ThrowIfNullOrEmpty(previousMethodName);
 
-		Logger.Warn(exception, $"{previousMethodName}()");
+		LogEventInfo logEventInfo = new(LogLevel.Warn, Logger.Name, exception, null, $"{previousMethodName}()") {
+			Properties = {
+				["SeverityCategory"] = "WarningException"
+			}
+		};
+
+		Logger.Log(logEventInfo);
 	}
 
 	[PublicAPI]

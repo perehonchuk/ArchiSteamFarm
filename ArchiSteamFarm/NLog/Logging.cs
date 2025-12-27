@@ -236,6 +236,7 @@ internal static class Logging {
 			}
 
 #pragma warning disable CA2000 // False positive, we're adding this disposable object to the global scope, so we can't dispose it
+			// Main log file for Info and Debug levels
 			FileTarget fileTarget = new("File") {
 				ArchiveFileName = Path.Combine("${currentdir:cached=true}", SharedInfo.ArchivalLogsDirectory, SharedInfo.LogFile),
 				ArchiveOldFileOnStartup = true,
@@ -249,9 +250,33 @@ internal static class Logging {
 				Layout = GeneralLayout,
 				MaxArchiveFiles = 10
 			};
+
+			// Error log file for Warn, Error, and Fatal levels
+			FileTarget errorFileTarget = new("ErrorFile") {
+				ArchiveFileName = Path.Combine("${currentdir:cached=true}", SharedInfo.ArchivalLogsDirectory, "errors.txt"),
+				ArchiveOldFileOnStartup = true,
+				ArchiveSuffixFormat = ".{1:yyyyMMdd-HHmmss}",
+				FileName = Path.Combine("${currentdir:cached=true}", "errors.txt"),
+				KeepFileOpen = !OperatingSystem.IsWindows(),
+				Layout = GeneralLayout,
+				MaxArchiveFiles = 10
+			};
+
+			// Trace log file for Trace level (detailed diagnostics)
+			FileTarget traceFileTarget = new("TraceFile") {
+				ArchiveFileName = Path.Combine("${currentdir:cached=true}", SharedInfo.ArchivalLogsDirectory, "trace.txt"),
+				ArchiveOldFileOnStartup = true,
+				ArchiveSuffixFormat = ".{1:yyyyMMdd-HHmmss}",
+				FileName = Path.Combine("${currentdir:cached=true}", "trace.txt"),
+				KeepFileOpen = !OperatingSystem.IsWindows(),
+				Layout = GeneralLayout,
+				MaxArchiveFiles = 5
+			};
 #pragma warning restore CA2000 // False positive, we're adding this disposable object to the global scope, so we can't dispose it
 
 			InitializeTarget(LogManager.Configuration, fileTarget);
+			InitializeSeverityTarget(LogManager.Configuration, errorFileTarget, LogLevel.Warn);
+			InitializeSeverityTarget(LogManager.Configuration, traceFileTarget, LogLevel.Trace, LogLevel.Trace);
 
 			LogManager.ReconfigExistingLoggers();
 		}
@@ -531,6 +556,31 @@ internal static class Logging {
 		}
 
 		config.LoggingRules.Add(new LoggingRule("*", LogLevel.Debug, target));
+	}
+
+	private static void InitializeSeverityTarget(LoggingConfiguration config, Target target, LogLevel minLevel, LogLevel? maxLevel = null) {
+		ArgumentNullException.ThrowIfNull(config);
+		ArgumentNullException.ThrowIfNull(target);
+		ArgumentNullException.ThrowIfNull(minLevel);
+
+		config.AddTarget(target);
+
+		// Create a logging rule that filters for specific severity levels
+		LoggingRule rule = new("*", target);
+
+		if (maxLevel != null) {
+			// If maxLevel is specified, only log that specific level
+			rule.EnableLoggingForLevel(maxLevel);
+		} else {
+			// Otherwise, log from minLevel and above
+			foreach (LogLevel level in LogLevel.AllLoggingLevels) {
+				if (level >= minLevel) {
+					rule.EnableLoggingForLevel(level);
+				}
+			}
+		}
+
+		config.LoggingRules.Add(rule);
 	}
 
 	private static void OnConfigurationChanged(object? sender, LoggingConfigurationChangedEventArgs e) {
