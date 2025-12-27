@@ -181,6 +181,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private readonly SteamClient SteamClient;
 	private readonly ConcurrentHashSet<ulong> SteamFamilySharingIDs = [];
 	private readonly SteamUser SteamUser;
+	private readonly ConcurrentHashSet<ulong> TradesInValidation = [];
 	private readonly SemaphoreSlim UnpackBoosterPacksSemaphore = new(1, 1);
 
 	private IEnumerable<(string FilePath, EFileType FileType)> RelatedFiles {

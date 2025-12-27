@@ -345,6 +345,22 @@ public sealed class Trading : IDisposable {
 		bool tradeRequiresMobileConfirmation = false;
 
 		switch (result) {
+			case ParseTradeResult.EResult.Validating:
+				// Enter validation phase - perform additional security checks
+				Bot.ArchiLogger.LogGenericInfo($"Trade {tradeOffer.TradeOfferID} entering validation phase");
+
+				if (Bot.HasMobileAuthenticator && (tradeOffer.ItemsToGive.Count > 0)) {
+					// For trades giving items, transition to accepted after validation
+					Bot.ArchiLogger.LogGenericInfo($"Trade {tradeOffer.TradeOfferID} passed validation, accepting");
+					result = ParseTradeResult.EResult.Accepted;
+					tradeRequiresMobileConfirmation = true;
+				} else {
+					// For donation trades or bots without 2FA, reject during validation
+					Bot.ArchiLogger.LogGenericWarning($"Trade {tradeOffer.TradeOfferID} failed validation, rejecting");
+					result = ParseTradeResult.EResult.Rejected;
+				}
+
+				break;
 			case ParseTradeResult.EResult.Blacklisted:
 			case ParseTradeResult.EResult.Ignored:
 			case ParseTradeResult.EResult.Rejected:
@@ -583,7 +599,8 @@ public sealed class Trading : IDisposable {
 				handledSets.UnionWith(wantedSets);
 			}
 
-			acceptResult = ParseTradeResult.EResult.Accepted;
+			// STM trades with items to give go through validation phase first
+			acceptResult = (tradeOffer.ItemsToGive.Count > 0) ? ParseTradeResult.EResult.Validating : ParseTradeResult.EResult.Accepted;
 		} else {
 			acceptResult = ParseTradeResult.EResult.Rejected;
 		}

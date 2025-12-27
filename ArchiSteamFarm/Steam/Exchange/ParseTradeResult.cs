@@ -62,6 +62,7 @@ public sealed class ParseTradeResult {
 	public enum EResult : byte {
 		Unknown,
 		Accepted,
+		Validating,
 		Blacklisted,
 		Ignored,
 		Rejected,
