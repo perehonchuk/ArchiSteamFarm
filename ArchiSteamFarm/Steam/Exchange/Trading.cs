@@ -50,6 +50,14 @@ public sealed class Trading : IDisposable {
 
 	private bool ParsingScheduled;
 
+	internal enum ETradePriority : byte {
+		Master = 0,     // Highest priority: trades from Master users
+		Donation = 1,   // High priority: donation trades from bot or non-bot users
+		STMGood = 2,    // Medium priority: STM trades that are beneficial
+		STMNeutral = 3, // Low priority: STM trades that are neutral
+		Unknown = 255   // Lowest priority: all other trades
+	}
+
 	internal Trading(Bot bot) {
 		ArgumentNullException.ThrowIfNull(bot);
 
@@ -274,6 +282,47 @@ public sealed class Trading : IDisposable {
 		return state;
 	}
 
+	private ETradePriority DetermineTradePriority(TradeOffer tradeOffer) {
+		ArgumentNullException.ThrowIfNull(tradeOffer);
+
+		if (Bot.Bots == null) {
+			return ETradePriority.Unknown;
+		}
+
+		// Check if trade is from Master user (highest priority)
+		if ((tradeOffer.OtherSteamID64 != 0) && (Bot.GetAccess(tradeOffer.OtherSteamID64) >= EAccess.Master)) {
+			return ETradePriority.Master;
+		}
+
+		// Check if it's a donation trade (no items being given away)
+		if (tradeOffer.ItemsToGive.Count == 0) {
+			return ETradePriority.Donation;
+		}
+
+		// For trades with items to give, check if it might be STM trade
+		if (Bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.SteamTradeMatcher)) {
+			// If we're giving more than receiving, it's unlikely to be good
+			if (tradeOffer.ItemsToGive.Count > tradeOffer.ItemsToReceive.Count) {
+				return ETradePriority.Unknown;
+			}
+
+			// Check if it's fair exchange (basic check)
+			if (Bot.BotConfig.MatchableTypes.IsEmpty || !tradeOffer.IsValidSteamItemsRequest(Bot.BotConfig.MatchableTypes) || !IsFairExchange(tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive)) {
+				return ETradePriority.Unknown;
+			}
+
+			// If items count matches exactly, likely neutral trade
+			if (tradeOffer.ItemsToGive.Count == tradeOffer.ItemsToReceive.Count) {
+				return ETradePriority.STMNeutral;
+			}
+
+			// If receiving more than giving, likely good trade
+			return ETradePriority.STMGood;
+		}
+
+		return ETradePriority.Unknown;
+	}
+
 	private async Task<bool> ParseActiveTrades() {
 		bool lootableTypesReceived = false;
 
@@ -290,7 +339,13 @@ public sealed class Trading : IDisposable {
 
 			HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets = [];
 
-			IEnumerable<Task<ParseTradeResult>> tasks = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID)).Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
+			// Sort trade offers by priority before processing
+			List<TradeOffer> activeTradeOffers = tradeOffers
+				.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID))
+				.OrderBy(tradeOffer => DetermineTradePriority(tradeOffer))
+				.ToList();
+
+			IEnumerable<Task<ParseTradeResult>> tasks = activeTradeOffers.Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
 
 			IList<ParseTradeResult> tradeResults = await Utilities.InParallel(tasks).ConfigureAwait(false);
 
@@ -341,6 +396,7 @@ public sealed class Trading : IDisposable {
 		ArgumentNullException.ThrowIfNull(tradeOffer);
 		ArgumentNullException.ThrowIfNull(handledSets);
 
+		ETradePriority priority = DetermineTradePriority(tradeOffer);
 		ParseTradeResult.EResult result = await ShouldAcceptTrade(tradeOffer, handledSets).ConfigureAwait(false);
 		bool tradeRequiresMobileConfirmation = false;
 
@@ -408,10 +464,18 @@ public sealed class Trading : IDisposable {
 			default:
 				Bot.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(result), result));
 
-				return new ParseTradeResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Ignored, false, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive);
+				ParseTradeResult unknownResult = new(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Ignored, false, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive) {
+					Priority = (byte) priority
+				};
+
+				return unknownResult;
 		}
 
-		return new ParseTradeResult(tradeOffer.TradeOfferID, result, tradeRequiresMobileConfirmation, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive);
+		ParseTradeResult tradeResult = new(tradeOffer.TradeOfferID, result, tradeRequiresMobileConfirmation, tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive) {
+			Priority = (byte) priority
+		};
+
+		return tradeResult;
 	}
 
 	private async Task<ParseTradeResult.EResult> ShouldAcceptTrade(TradeOffer tradeOffer, ISet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets) {
