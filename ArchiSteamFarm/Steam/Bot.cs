@@ -176,6 +176,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private readonly SemaphoreSlim InitializationSemaphore = new(1, 1);
 	private readonly SemaphoreSlim MessagingSemaphore = new(1, 1);
 	private readonly ConcurrentDictionary<UserNotificationsCallback.EUserNotification, uint> PastNotifications = new();
+	private readonly ConcurrentDictionary<UserNotificationsCallback.EUserNotification, DateTime> PendingLowPriorityNotifications = new();
+	private readonly Timer NotificationProcessingTimer;
 	private readonly SemaphoreSlim RefreshWebSessionSemaphore = new(1, 1);
 	private readonly SemaphoreSlim SendCompleteTypesSemaphore = new(1, 1);
 	private readonly SteamClient SteamClient;
@@ -405,6 +407,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(ASF.LoadBalancingDelay * Bots?.Count ?? 0), // Delay
 			TimeSpan.FromMinutes(1) // Period
 		);
+
+		NotificationProcessingTimer = new Timer(
+			ProcessPendingLowPriorityNotifications,
+			null,
+			TimeSpan.FromSeconds(30), // Delay
+			TimeSpan.FromSeconds(30) // Period
+		);
 	}
 
 	public void Dispose() {
@@ -413,6 +422,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		Actions.Dispose();
 		CardsFarmer.Dispose();
 		HeartBeatTimer.Dispose();
+		NotificationProcessingTimer.Dispose();
 
 		// Those are objects that might be null and the check should be in-place
 		CallbacksAborted?.Cancel();
@@ -431,6 +441,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await Actions.DisposeAsync().ConfigureAwait(false);
 		await CardsFarmer.DisposeAsync().ConfigureAwait(false);
 		await HeartBeatTimer.DisposeAsync().ConfigureAwait(false);
+		await NotificationProcessingTimer.DisposeAsync().ConfigureAwait(false);
 
 		// Those are objects that might be null and the check should be in-place
 		if (CallbacksAborted != null) {
@@ -2879,6 +2890,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		ArchiLogger.LogGenericInfo(Strings.BotDisconnected);
 
 		PastNotifications.Clear();
+		PendingLowPriorityNotifications.Clear();
 
 		Actions.OnDisconnected();
 		ArchiWebHandler.OnDisconnected();
@@ -3550,6 +3562,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		HashSet<UserNotificationsCallback.EUserNotification> newPluginNotifications = [];
+		HashSet<UserNotificationsCallback.EUserNotification> highPriorityNotifications = [];
+		HashSet<UserNotificationsCallback.EUserNotification> lowPriorityNotifications = [];
 
 		foreach ((UserNotificationsCallback.EUserNotification notification, uint count) in callback.Notifications) {
 			bool newNotification;
@@ -3560,32 +3574,103 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				if (newNotification) {
 					newPluginNotifications.Add(notification);
+
+					// Classify notification priority
+					if (GetNotificationPriority(notification)) {
+						highPriorityNotifications.Add(notification);
+					} else {
+						lowPriorityNotifications.Add(notification);
+					}
 				}
 			} else {
 				newNotification = false;
 				PastNotifications.TryRemove(notification, out _);
+				PendingLowPriorityNotifications.TryRemove(notification, out _);
 			}
 
 			ArchiLogger.LogGenericTrace($"{notification} = {count}");
+		}
 
+		// Process high-priority notifications immediately
+		foreach (UserNotificationsCallback.EUserNotification notification in highPriorityNotifications) {
 			switch (notification) {
-				case UserNotificationsCallback.EUserNotification.Gifts when newNotification && BotConfig.AcceptGifts:
+				case UserNotificationsCallback.EUserNotification.Gifts when BotConfig.AcceptGifts:
 					Utilities.InBackground(Actions.AcceptDigitalGiftCards);
 
 					break;
-				case UserNotificationsCallback.EUserNotification.Items when newNotification:
-					OnInventoryChanged();
-
-					break;
-				case UserNotificationsCallback.EUserNotification.Trading when newNotification && !BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.DisableIncomingTradesParsing):
+				case UserNotificationsCallback.EUserNotification.Trading when !BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.DisableIncomingTradesParsing):
 					Utilities.InBackground(Trading.OnNewTrade);
 
 					break;
 			}
 		}
 
+		// Queue low-priority notifications for batched processing
+		foreach (UserNotificationsCallback.EUserNotification notification in lowPriorityNotifications) {
+			PendingLowPriorityNotifications[notification] = DateTime.UtcNow;
+		}
+
 		if (newPluginNotifications.Count > 0) {
 			Utilities.InBackground(() => PluginsCore.OnBotUserNotifications(this, newPluginNotifications));
+		}
+	}
+
+	private static bool GetNotificationPriority(UserNotificationsCallback.EUserNotification notification) {
+		// Return true for high-priority notifications that require immediate processing
+		// Return false for low-priority notifications that can be batched/delayed
+		return notification switch {
+			UserNotificationsCallback.EUserNotification.Trading => true,
+			UserNotificationsCallback.EUserNotification.Gifts => true,
+			UserNotificationsCallback.EUserNotification.AccountAlerts => true,
+			UserNotificationsCallback.EUserNotification.Items => false,
+			UserNotificationsCallback.EUserNotification.Comments => false,
+			UserNotificationsCallback.EUserNotification.Chat => false,
+			UserNotificationsCallback.EUserNotification.Invites => false,
+			UserNotificationsCallback.EUserNotification.ModeratorMessages => false,
+			UserNotificationsCallback.EUserNotification.GameTurns => false,
+			UserNotificationsCallback.EUserNotification.HelpRequestReplies => false,
+			_ => false
+		};
+	}
+
+	private void ProcessPendingLowPriorityNotifications(object? state = null) {
+		if (PendingLowPriorityNotifications.IsEmpty) {
+			return;
+		}
+
+		DateTime now = DateTime.UtcNow;
+		List<UserNotificationsCallback.EUserNotification> notificationsToProcess = [];
+
+		// Process notifications that have been pending for at least 30 seconds
+		foreach ((UserNotificationsCallback.EUserNotification notification, DateTime queuedTime) in PendingLowPriorityNotifications) {
+			if ((now - queuedTime).TotalSeconds >= 30) {
+				notificationsToProcess.Add(notification);
+				PendingLowPriorityNotifications.TryRemove(notification, out _);
+			}
+		}
+
+		if (notificationsToProcess.Count == 0) {
+			return;
+		}
+
+		ArchiLogger.LogGenericTrace($"Processing {notificationsToProcess.Count} batched low-priority notification(s)");
+
+		// Process batched low-priority notifications
+		foreach (UserNotificationsCallback.EUserNotification notification in notificationsToProcess) {
+			switch (notification) {
+				case UserNotificationsCallback.EUserNotification.Items:
+					OnInventoryChanged();
+
+					break;
+				case UserNotificationsCallback.EUserNotification.Comments:
+				case UserNotificationsCallback.EUserNotification.Chat:
+				case UserNotificationsCallback.EUserNotification.Invites:
+				case UserNotificationsCallback.EUserNotification.ModeratorMessages:
+				case UserNotificationsCallback.EUserNotification.GameTurns:
+				case UserNotificationsCallback.EUserNotification.HelpRequestReplies:
+					// These are handled by plugins through OnBotUserNotifications
+					break;
+			}
 		}
 	}
 
