@@ -91,6 +91,9 @@ public sealed class BotConfig {
 	public const ERemoteCommunication DefaultRemoteCommunication = ERemoteCommunication.All;
 
 	[PublicAPI]
+	public const bool DefaultSendTradesByRarity = true;
+
+	[PublicAPI]
 	public const byte DefaultSendTradePeriod = 0;
 
 	[PublicAPI]
@@ -261,6 +264,9 @@ public sealed class BotConfig {
 
 	[JsonInclude]
 	public ERemoteCommunication RemoteCommunication { get; init; } = DefaultRemoteCommunication;
+
+	[JsonInclude]
+	public bool SendTradesByRarity { get; init; } = DefaultSendTradesByRarity;
 
 	[JsonInclude]
 	[Range(byte.MinValue, byte.MaxValue)]
@@ -435,6 +441,9 @@ public sealed class BotConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeRemoteCommunication() => !Saving || (RemoteCommunication != DefaultRemoteCommunication);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeSendTradesByRarity() => !Saving || (SendTradesByRarity != DefaultSendTradesByRarity);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeSendTradePeriod() => !Saving || (SendTradePeriod != DefaultSendTradePeriod);

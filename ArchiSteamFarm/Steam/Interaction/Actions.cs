@@ -465,17 +465,57 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			await Bot.Trading.AcknowledgeTradeRestrictions().ConfigureAwait(false);
 		}
 
-		(bool success, _, HashSet<ulong>? mobileTradeOfferIDs) = await Bot.ArchiWebHandler.SendTradeOffer(targetSteamID, items, token: tradeToken, customMessage: customMessage, itemsPerTrade: itemsPerTrade).ConfigureAwait(false);
+		HashSet<ulong> allMobileTradeOfferIDs = [];
+		bool overallSuccess = true;
 
-		if ((mobileTradeOfferIDs?.Count > 0) && Bot.HasMobileAuthenticator) {
-			(bool twoFactorSuccess, _, _) = await HandleTwoFactorAuthenticationConfirmations(true, Confirmation.EConfirmationType.Trade, mobileTradeOfferIDs, true).ConfigureAwait(false);
+		// When SendTradesByRarity is enabled, group items by rarity and send in descending rarity order (highest rarity first)
+		// This ensures valuable items are prioritized and sent in separate trade offers
+		if (Bot.BotConfig.SendTradesByRarity) {
+			Dictionary<EAssetRarity, List<Asset>> itemsByRarity = items.GroupBy(static item => item.Rarity)
+				.OrderByDescending(static group => group.Key)
+				.ToDictionary(static group => group.Key, static group => group.ToList());
+
+			foreach ((EAssetRarity rarity, List<Asset> rarityItems) in itemsByRarity) {
+				Bot.ArchiLogger.LogGenericInfo($"Sending {rarityItems.Count} item(s) of rarity {rarity} to {targetSteamID}...");
+
+				(bool success, _, HashSet<ulong>? mobileTradeOfferIDs) = await Bot.ArchiWebHandler.SendTradeOffer(targetSteamID, rarityItems, token: tradeToken, customMessage: customMessage, itemsPerTrade: itemsPerTrade).ConfigureAwait(false);
+
+				if (!success) {
+					overallSuccess = false;
+					Bot.ArchiLogger.LogGenericWarning($"Failed to send {rarity} rarity items!");
+
+					continue;
+				}
+
+				if (mobileTradeOfferIDs is { Count: > 0 }) {
+					allMobileTradeOfferIDs.UnionWith(mobileTradeOfferIDs);
+				}
+
+				// Add a small delay between rarity batches to avoid rate limiting
+				if (itemsByRarity.Count > 1) {
+					await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+				}
+			}
+		} else {
+			// Legacy behavior: send all items in a single trade offer (or multiple based on itemsPerTrade limit)
+			(bool success, _, HashSet<ulong>? mobileTradeOfferIDs) = await Bot.ArchiWebHandler.SendTradeOffer(targetSteamID, items, token: tradeToken, customMessage: customMessage, itemsPerTrade: itemsPerTrade).ConfigureAwait(false);
+
+			overallSuccess = success;
+
+			if (mobileTradeOfferIDs is { Count: > 0 }) {
+				allMobileTradeOfferIDs.UnionWith(mobileTradeOfferIDs);
+			}
+		}
+
+		if ((allMobileTradeOfferIDs.Count > 0) && Bot.HasMobileAuthenticator) {
+			(bool twoFactorSuccess, _, _) = await HandleTwoFactorAuthenticationConfirmations(true, Confirmation.EConfirmationType.Trade, allMobileTradeOfferIDs, true).ConfigureAwait(false);
 
 			if (!twoFactorSuccess) {
 				return (false, Strings.BotLootingFailed);
 			}
 		}
 
-		return success ? (true, Strings.BotLootingSuccess) : (false, Strings.BotLootingFailed);
+		return overallSuccess ? (true, Strings.BotLootingSuccess) : (false, Strings.BotLootingFailed);
 	}
 
 	[PublicAPI]
