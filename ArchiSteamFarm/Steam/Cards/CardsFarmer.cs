@@ -150,7 +150,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	[Required]
 	public bool Paused { get; private set; }
 
+	[JsonInclude]
+	[PublicAPI]
+	public bool Suspended { get; private set; }
+
 	private TaskCompletionSource<bool>? FarmingResetEvent;
+	private DateTime LastCardDropTime;
 	private bool ParsingScheduled;
 	private bool PermanentlyPaused;
 	private bool ShouldResumeFarming;
@@ -160,6 +165,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		ArgumentNullException.ThrowIfNull(bot);
 
 		Bot = bot;
+		LastCardDropTime = DateTime.UtcNow;
 
 		byte idleFarmingPeriod = ASF.GlobalConfig?.IdleFarmingPeriod ?? GlobalConfig.DefaultIdleFarmingPeriod;
 
@@ -208,6 +214,13 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// We aim to have a maximum of 2 tasks, one already parsing, and one waiting in the queue
 		// This way we can call this function as many times as needed e.g. because of Steam events
 		ShouldResumeFarming = true;
+
+		// Auto-resume from suspended state when new games are added
+		if (Suspended) {
+			Bot.ArchiLogger.LogGenericInfo("New game detected - auto-resuming from suspended state");
+			Suspended = false;
+			LastCardDropTime = DateTime.UtcNow;
+		}
 
 		// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
 		lock (EventSemaphore) {
@@ -294,6 +307,13 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 		Paused = false;
 
+		// Also clear suspended state when resuming
+		if (Suspended) {
+			Bot.ArchiLogger.LogGenericInfo("Clearing suspended state due to resume");
+			Suspended = false;
+			LastCardDropTime = DateTime.UtcNow;
+		}
+
 		if (NowFarming) {
 			return true;
 		}
@@ -309,12 +329,20 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 	internal void SetInitialState(bool paused) {
 		PermanentlyPaused = Paused = paused;
+		Suspended = false;
 		ShouldResumeFarming = ShouldSkipNewGamesIfPossible = false;
 	}
 
 	internal async Task StartFarming() {
 		if (NowFarming || Paused || !Bot.IsPlayingPossible) {
 			return;
+		}
+
+		// Clear suspended state when explicitly starting farming
+		if (Suspended) {
+			Bot.ArchiLogger.LogGenericInfo("Resuming from suspended state");
+			Suspended = false;
+			LastCardDropTime = DateTime.UtcNow;
 		}
 
 		if (!Bot.CanReceiveSteamCards || (Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmPriorityQueueOnly) && (Bot.BotDatabase.FarmingPriorityQueueAppIDs.Count == 0))) {
@@ -891,6 +919,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 		bool keepFarming = true;
 		DateTime endFarmingDate = DateTime.UtcNow.AddHours(ASF.GlobalConfig?.MaxFarmingTime ?? GlobalConfig.DefaultMaxFarmingTime);
+		uint initialCardsRemaining = game.CardsRemaining;
 
 		while ((DateTime.UtcNow < endFarmingDate) && (await ShouldFarm(game).ConfigureAwait(false)).GetValueOrDefault(true)) {
 			Bot.ArchiLogger.LogGenericInfo(Strings.FormatStillIdling(game.AppID, game.GameName));
@@ -909,6 +938,13 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 				if (keepFarming) {
 					// We've got an event that suggests item drop, wait for a brief moment to fight with potential cache issues
 					await Task.Delay(2000).ConfigureAwait(false);
+
+					// Check if cards actually dropped
+					if (game.CardsRemaining < initialCardsRemaining) {
+						LastCardDropTime = DateTime.UtcNow;
+						initialCardsRemaining = game.CardsRemaining;
+						Bot.ArchiLogger.LogGenericInfo($"Card drop detected! Cards remaining: {game.CardsRemaining}");
+					}
 				}
 			} catch (TimeoutException e) {
 				Bot.ArchiLogger.LogGenericDebuggingException(e);
@@ -916,6 +952,15 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 			// Don't forget to update our GamesToFarm hours
 			game.HoursPlayed += (float) DateTime.UtcNow.Subtract(startFarmingPeriod).TotalHours;
+
+			// Check if farming has been idle for too long (3 hours without card drops)
+			TimeSpan timeSinceLastDrop = DateTime.UtcNow - LastCardDropTime;
+			if (timeSinceLastDrop > TimeSpan.FromHours(3)) {
+				Bot.ArchiLogger.LogGenericWarning($"No card drops detected for {timeSinceLastDrop.TotalHours:F1} hours. Entering suspended state.");
+				Suspended = true;
+				keepFarming = false;
+				break;
+			}
 
 			if (!keepFarming) {
 				break;

@@ -3234,6 +3234,10 @@ public sealed class Commands {
 			return (FormatBotResponse(Strings.BotStatusPaused), Bot);
 		}
 
+		if (Bot.CardsFarmer.Suspended) {
+			return (FormatBotResponse("Suspended (no card drops detected for extended period)"), Bot);
+		}
+
 		if (Bot.IsAccountLimited) {
 			return (FormatBotResponse(Strings.BotStatusLimited), Bot);
 		}
