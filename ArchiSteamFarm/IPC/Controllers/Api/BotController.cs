@@ -625,4 +625,13 @@ public sealed class BotController : ArchiController {
 
 		return new BotRemoveLicenseResponse(apps, packages);
 	}
+
+	[EndpointSummary("Fetches available bot group selectors")]
+	[HttpGet("Groups")]
+	[ProducesResponseType<GenericResponse<IReadOnlyList<string>>>((int) HttpStatusCode.OK)]
+	public ActionResult<GenericResponse> GetBotGroupsGet() {
+		List<string> botGroups = ["@all", "@farming", "@idle", "@offline", "@online", "@paused", "@enabled", "@stopped"];
+
+		return Ok(new GenericResponse<IReadOnlyList<string>>(botGroups));
+	}
 }
