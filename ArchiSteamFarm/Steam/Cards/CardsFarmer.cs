@@ -152,6 +152,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 	private TaskCompletionSource<bool>? FarmingResetEvent;
 	private bool ParsingScheduled;
+	private bool PauseGracefully;
+	private byte PausePriority;
 	private bool PermanentlyPaused;
 	private bool ShouldResumeFarming;
 	private bool ShouldSkipNewGamesIfPossible;
@@ -267,9 +269,20 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	internal async Task Pause(bool permanent) {
+	internal async Task Pause(bool permanent, bool graceful = false, byte priority = 0) {
 		if (permanent) {
 			PermanentlyPaused = true;
+		}
+
+		PauseGracefully = graceful;
+		PausePriority = priority;
+
+		if (graceful && NowFarming && (CurrentGamesFarming.Count > 0)) {
+			// In graceful mode, we mark as paused but let the current game finish farming
+			Paused = true;
+			Bot.ArchiLogger.LogGenericInfo($"Graceful pause requested with priority {priority}. Will pause after current game completes.");
+
+			return;
 		}
 
 		Paused = true;
@@ -1003,6 +1016,15 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		bool result = await FarmHours(games).ConfigureAwait(false);
 		CurrentGamesFarming.Clear();
 
+		// Check if graceful pause was requested and should be honored now
+		if (PauseGracefully && Paused && result) {
+			Bot.ArchiLogger.LogGenericInfo($"Graceful pause (priority {PausePriority}) activated after batch completion.");
+			PauseGracefully = false;
+			await StopFarming().ConfigureAwait(false);
+
+			return false;
+		}
+
 		return result;
 	}
 
@@ -1023,6 +1045,15 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		GamesToFarm.Remove(game);
 
 		Bot.ArchiLogger.LogGenericInfo(Strings.FormatIdlingFinishedForGame(game.AppID, game.GameName, TimeSpan.FromHours(game.HoursPlayed).ToHumanReadable()));
+
+		// Check if graceful pause was requested and should be honored now
+		if (PauseGracefully && Paused) {
+			Bot.ArchiLogger.LogGenericInfo($"Graceful pause (priority {PausePriority}) activated after game completion.");
+			PauseGracefully = false;
+			await StopFarming().ConfigureAwait(false);
+
+			return false;
+		}
 
 		return true;
 	}

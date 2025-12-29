@@ -153,6 +153,10 @@ public sealed class Commands {
 						return await ResponsePause(access, true).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, false).ConfigureAwait(false);
+					case "PAUSE!":
+						return await ResponsePauseGraceful(access, true).ConfigureAwait(false);
+					case "PAUSE#":
+						return await ResponsePauseGraceful(access, true, 1).ConfigureAwait(false);
 					case "POINTS":
 						return await ResponsePointsBalance(access).ConfigureAwait(false);
 					case "RESET":
@@ -282,6 +286,14 @@ public sealed class Commands {
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID: steamID).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), false, steamID: steamID).ConfigureAwait(false);
+					case "PAUSE!" when args.Length > 2:
+						return await ResponsePauseGraceful(access, args[1], true, args[2], steamID).ConfigureAwait(false);
+					case "PAUSE!":
+						return await ResponsePauseGraceful(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID: steamID).ConfigureAwait(false);
+					case "PAUSE#" when args.Length > 2:
+						return await ResponsePauseGraceful(access, args[1], true, args[2], steamID).ConfigureAwait(false);
+					case "PAUSE#":
+						return await ResponsePauseGraceful(access, Utilities.GetArgsAsText(args, 1, ","), true, "1", steamID).ConfigureAwait(false);
 					case "PAUSE&" when args.Length > 2:
 						return await ResponsePause(access, args[1], true, Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 					case "PAUSE&":
@@ -2285,6 +2297,50 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePause(GetProxyAccess(bot, access, steamID), permanent, resumeInSecondsText))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponsePauseGraceful(EAccess access, bool permanent, byte priority = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.FamilySharing) {
+			return null;
+		}
+
+		if (permanent && (access < EAccess.Operator)) {
+			return FormatBotResponse(Strings.ErrorAccessDenied);
+		}
+
+		(bool success, string message) = await Bot.Actions.Pause(permanent, 0, true, priority).ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static async Task<string?> ResponsePauseGraceful(EAccess access, string botNames, bool permanent, string? priorityText = null, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		byte priority = 0;
+
+		if (!string.IsNullOrEmpty(priorityText) && !byte.TryParse(priorityText, out priority)) {
+			return FormatStaticResponse(Strings.FormatErrorIsInvalid(nameof(priorityText)));
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePauseGraceful(GetProxyAccess(bot, access, steamID), permanent, priority))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
