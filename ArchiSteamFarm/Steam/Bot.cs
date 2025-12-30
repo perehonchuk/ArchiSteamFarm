@@ -72,7 +72,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private const byte LoginCooldownInMinutes = 25; // Captcha disappears after around 20 minutes, so we make it 25
 	private const uint LoginID = 1242; // This must be the same for all ASF bots and all ASF processes
 	private const byte MaxLoginFailures = 3; // Max login failures in a row before we determine that our credentials are invalid (because Steam wrongly returns those, of course)
+	private const byte MaxReconnectionAttempts = 10; // Maximum reconnection attempts before capping the backoff delay
 	private const byte MinimumAccessTokenValidityMinutes = 5;
+	private const ushort ReconnectionBaseDelaySeconds = 5; // Base delay for exponential backoff calculation
 	private const byte RedeemCooldownInHours = 1; // 1 hour since first redeem attempt, this is a limitation enforced by Steam
 	private const byte RegionRestrictionPlayableBlockMonths = 3;
 
@@ -295,6 +297,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private string? AuthCode;
 	private CancellationTokenSource? CallbacksAborted;
 	private Timer? ConnectionFailureTimer;
+	private byte ConsecutiveReconnectionAttempts;
 	private bool FirstTradeSent;
 	private Timer? GamesRedeemerInBackgroundTimer;
 	private string? IPCountryCode;
@@ -1932,6 +1935,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 
 			KeepRunning = true;
+			ConsecutiveReconnectionAttempts = 0;
 
 			ArchiLogger.LogGenericInfo(Strings.Starting);
 
@@ -2712,6 +2716,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private async void OnConnected(SteamClient.ConnectedCallback callback) {
 		ArgumentNullException.ThrowIfNull(callback);
 
+		ConsecutiveReconnectionAttempts = 0;
 		HeartBeatFailures = 0;
 		ReconnectOnUserInitiated = false;
 		StopConnectionFailureTimer();
@@ -2938,8 +2943,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				break;
 			default:
-				// Generic delay before retrying
-				await Task.Delay(5000).ConfigureAwait(false);
+				// Exponential backoff with capping for reconnection attempts
+				ConsecutiveReconnectionAttempts++;
+
+				byte effectiveAttempts = Math.Min(ConsecutiveReconnectionAttempts, MaxReconnectionAttempts);
+				int delaySeconds = ReconnectionBaseDelaySeconds * (1 << (effectiveAttempts - 1));
+
+				ArchiLogger.LogGenericInfo($"Reconnection attempt #{ConsecutiveReconnectionAttempts}, waiting {delaySeconds} seconds before retry...");
+
+				await Task.Delay(delaySeconds * 1000).ConfigureAwait(false);
 
 				break;
 		}

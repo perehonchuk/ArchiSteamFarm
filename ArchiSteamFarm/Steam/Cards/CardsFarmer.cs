@@ -151,6 +151,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	public bool Paused { get; private set; }
 
 	private TaskCompletionSource<bool>? FarmingResetEvent;
+	private DateTime? LastDisconnectionTime;
 	private bool ParsingScheduled;
 	private bool PermanentlyPaused;
 	private bool ShouldResumeFarming;
@@ -194,6 +195,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	}
 
 	internal void OnDisconnected() {
+		LastDisconnectionTime = DateTime.UtcNow;
+
 		if (!NowFarming) {
 			return;
 		}
@@ -315,6 +318,17 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	internal async Task StartFarming() {
 		if (NowFarming || Paused || !Bot.IsPlayingPossible) {
 			return;
+		}
+
+		// Log if farming is resuming shortly after a disconnection (possible reconnection scenario)
+		if (LastDisconnectionTime.HasValue) {
+			TimeSpan timeSinceDisconnection = DateTime.UtcNow - LastDisconnectionTime.Value;
+
+			if (timeSinceDisconnection.TotalSeconds < 30) {
+				Bot.ArchiLogger.LogGenericInfo($"Resuming farming {timeSinceDisconnection.TotalSeconds:F1} seconds after disconnection");
+			}
+
+			LastDisconnectionTime = null;
 		}
 
 		if (!Bot.CanReceiveSteamCards || (Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmPriorityQueueOnly) && (Bot.BotDatabase.FarmingPriorityQueueAppIDs.Count == 0))) {
