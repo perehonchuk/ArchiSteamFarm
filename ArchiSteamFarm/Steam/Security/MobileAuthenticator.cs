@@ -46,6 +46,8 @@ public sealed class MobileAuthenticator : IDisposable {
 	internal const byte CodeDigits = 5;
 
 	private const byte CodeInterval = 30;
+	private const ushort BatchProcessingDelayMilliseconds = 800;
+	private const byte MaxConfirmationsPerBatch = 10;
 
 	// For how many minutes we can assume that SteamTimeDifference is correct
 	private const byte SteamTimeTTL = 15;
@@ -270,26 +272,86 @@ public sealed class MobileAuthenticator : IDisposable {
 			return false;
 		}
 
-		bool? result = await Bot.ArchiWebHandler.HandleConfirmations(deviceID, confirmationHash, time, confirmations, accept).ConfigureAwait(false);
+		// Group confirmations by priority and process in batches
+		List<Confirmation> sortedConfirmations = confirmations.OrderBy(static c => c.GetProcessingPriority()).ToList();
 
-		if (!result.HasValue) {
-			// Request timed out
-			return false;
+		List<List<Confirmation>> batches = [];
+		List<Confirmation> currentBatch = [];
+		byte? currentPriority = null;
+
+		foreach (Confirmation confirmation in sortedConfirmations) {
+			byte priority = confirmation.GetProcessingPriority();
+
+			// Start new batch if priority changed or batch is full
+			if ((currentPriority.HasValue && (priority != currentPriority.Value)) || (currentBatch.Count >= MaxConfirmationsPerBatch)) {
+				if (currentBatch.Count > 0) {
+					batches.Add(currentBatch);
+					currentBatch = [];
+				}
+			}
+
+			currentBatch.Add(confirmation);
+			currentPriority = priority;
 		}
 
-		if (result.Value) {
-			// Request succeeded
-			return true;
+		// Add final batch
+		if (currentBatch.Count > 0) {
+			batches.Add(currentBatch);
 		}
 
-		// Our multi request failed, this is almost always Steam issue that happens randomly
-		// In this case, we'll accept all pending confirmations one-by-one, synchronously (as Steam can't handle them in parallel)
-		// We totally ignore actual result returned by those calls, abort only if request timed out
-		foreach (Confirmation confirmation in confirmations) {
-			bool? confirmationResult = await Bot.ArchiWebHandler.HandleConfirmation(deviceID, confirmationHash, time, confirmation.ID, confirmation.Nonce, accept).ConfigureAwait(false);
+		if (batches.Count > 1) {
+			Bot.ArchiLogger.LogGenericInfo($"Processing {confirmations.Count} confirmations in {batches.Count} priority-based batches...");
+		}
 
-			if (!confirmationResult.HasValue) {
+		// Process batches sequentially with delay between them
+		for (int i = 0; i < batches.Count; i++) {
+			List<Confirmation> batch = batches[i];
+
+			if (batches.Count > 1) {
+				Bot.ArchiLogger.LogGenericDebug($"Processing batch {i + 1}/{batches.Count} ({batch.Count} confirmations, priority: {batch[0].GetProcessingPriority()})");
+			}
+
+			if (i > 0) {
+				// Add delay between batches to prevent rate limiting
+				await Task.Delay(BatchProcessingDelayMilliseconds).ConfigureAwait(false);
+
+				// Refresh time and hash for each batch
+				time = await GetSteamTime().ConfigureAwait(false);
+
+				if (time == 0) {
+					throw new InvalidOperationException(nameof(time));
+				}
+
+				confirmationHash = GenerateConfirmationHash(time, "conf");
+
+				if (string.IsNullOrEmpty(confirmationHash)) {
+					Bot.ArchiLogger.LogNullError(confirmationHash);
+
+					return false;
+				}
+			}
+
+			bool? result = await Bot.ArchiWebHandler.HandleConfirmations(deviceID, confirmationHash, time, batch, accept).ConfigureAwait(false);
+
+			if (!result.HasValue) {
+				// Request timed out
 				return false;
+			}
+
+			if (result.Value) {
+				// Batch succeeded, continue to next batch
+				continue;
+			}
+
+			// Our multi request failed, this is almost always Steam issue that happens randomly
+			// In this case, we'll accept all pending confirmations one-by-one, synchronously (as Steam can't handle them in parallel)
+			// We totally ignore actual result returned by those calls, abort only if request timed out
+			foreach (Confirmation confirmation in batch) {
+				bool? confirmationResult = await Bot.ArchiWebHandler.HandleConfirmation(deviceID, confirmationHash, time, confirmation.ID, confirmation.Nonce, accept).ConfigureAwait(false);
+
+				if (!confirmationResult.HasValue) {
+					return false;
+				}
 			}
 		}
 

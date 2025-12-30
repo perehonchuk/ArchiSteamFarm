@@ -63,6 +63,20 @@ public sealed class Confirmation {
 	[UsedImplicitly]
 	public static bool ShouldSerializeNonce() => false;
 
+	public byte GetProcessingPriority() {
+		return ConfirmationType switch {
+			EConfirmationType.Trade => 10,
+			EConfirmationType.Market => 20,
+			EConfirmationType.AccountSecurity => 30,
+			EConfirmationType.AccountRecovery => 40,
+			EConfirmationType.PhoneNumberChange => 50,
+			EConfirmationType.ApiKeyRegistration => 60,
+			EConfirmationType.FamilyJoin => 70,
+			EConfirmationType.Generic => 80,
+			_ => 90
+		};
+	}
+
 	[PublicAPI]
 	public enum EConfirmationType : byte {
 		Unknown,

@@ -156,7 +156,10 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		bool success = confirmations != null;
 
-		return (success, confirmations, success ? Strings.Success : Strings.WarningFailed);
+		// Sort confirmations by priority for consistent API response ordering
+		IReadOnlyCollection<Confirmation>? sortedConfirmations = success ? confirmations!.OrderBy(static c => c.GetProcessingPriority()).ThenBy(static c => c.ID).ToImmutableList() : null;
+
+		return (success, sortedConfirmations, success ? Strings.Success : Strings.WarningFailed);
 	}
 
 	[PublicAPI]
