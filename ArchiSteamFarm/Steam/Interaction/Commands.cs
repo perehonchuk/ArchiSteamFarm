@@ -125,6 +125,12 @@ public sealed class Commands {
 						return await Response2FAConfirm(access, false).ConfigureAwait(false);
 					case "2FAOK":
 						return await Response2FAConfirm(access, true).ConfigureAwait(false);
+					case "2FAMARKET":
+						return await Response2FAConfirmTyped(access, Confirmation.EConfirmationType.Market).ConfigureAwait(false);
+					case "2FASTATUS":
+						return await Response2FAStatus(access).ConfigureAwait(false);
+					case "2FATRADE":
+						return await Response2FAConfirmTyped(access, Confirmation.EConfirmationType.Trade).ConfigureAwait(false);
 					case "BALANCE":
 						return ResponseWalletBalance(access);
 					case "BGR":
@@ -194,6 +200,12 @@ public sealed class Commands {
 						return await Response2FAConfirm(access, Utilities.GetArgsAsText(args, 1, ","), false, steamID).ConfigureAwait(false);
 					case "2FAOK":
 						return await Response2FAConfirm(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID).ConfigureAwait(false);
+					case "2FAMARKET":
+						return await Response2FAConfirmTyped(access, Utilities.GetArgsAsText(args, 1, ","), Confirmation.EConfirmationType.Market, steamID).ConfigureAwait(false);
+					case "2FASTATUS":
+						return await Response2FAStatus(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "2FATRADE":
+						return await Response2FAConfirmTyped(access, Utilities.GetArgsAsText(args, 1, ","), Confirmation.EConfirmationType.Trade, steamID).ConfigureAwait(false);
 					case "AL" or "ADDLICENCE" or "ADDLICENSE" when args.Length > 2:
 						return await ResponseAddLicense(access, args[1], Utilities.GetArgsAsText(args, 2, ","), steamID).ConfigureAwait(false);
 					case "AL" or "ADDLICENCE" or "ADDLICENSE":
@@ -626,6 +638,103 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.Response2FAConfirm(GetProxyAccess(bot, access, steamID), confirm))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> Response2FAConfirmTyped(EAccess access, Confirmation.EConfirmationType confirmationType) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (!Enum.IsDefined(confirmationType)) {
+			throw new InvalidEnumArgumentException(nameof(confirmationType), (int) confirmationType, typeof(Confirmation.EConfirmationType));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		if (!Bot.HasMobileAuthenticator) {
+			return FormatBotResponse(Strings.BotNoASFAuthenticator);
+		}
+
+		(bool success, _, string message) = await Bot.Actions.HandleTwoFactorAuthenticationConfirmations(true, confirmationType).ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private async Task<string?> Response2FAStatus(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		if (!Bot.HasMobileAuthenticator) {
+			return FormatBotResponse(Strings.BotNoASFAuthenticator);
+		}
+
+		(bool tradeSuccess, uint tradeCount) = await Bot.Actions.GetConfirmationCount(Confirmation.EConfirmationType.Trade).ConfigureAwait(false);
+		(bool marketSuccess, uint marketCount) = await Bot.Actions.GetConfirmationCount(Confirmation.EConfirmationType.Market).ConfigureAwait(false);
+
+		if (!tradeSuccess || !marketSuccess) {
+			return FormatBotResponse(Strings.WarningFailed);
+		}
+
+		return FormatBotResponse($"Trade confirmations: {tradeCount}, Market confirmations: {marketCount}");
+	}
+
+	private static async Task<string?> Response2FAStatus(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.Response2FAStatus(GetProxyAccess(bot, access, steamID)))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private static async Task<string?> Response2FAConfirmTyped(EAccess access, string botNames, Confirmation.EConfirmationType confirmationType, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		if (!Enum.IsDefined(confirmationType)) {
+			throw new InvalidEnumArgumentException(nameof(confirmationType), (int) confirmationType, typeof(Confirmation.EConfirmationType));
+		}
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.Response2FAConfirmTyped(GetProxyAccess(bot, access, steamID), confirmationType))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

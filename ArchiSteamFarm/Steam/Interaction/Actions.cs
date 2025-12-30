@@ -283,6 +283,31 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public async Task<(bool Success, uint Count)> GetConfirmationCount(Confirmation.EConfirmationType confirmationType) {
+		if (!Enum.IsDefined(confirmationType)) {
+			throw new InvalidEnumArgumentException(nameof(confirmationType), (int) confirmationType, typeof(Confirmation.EConfirmationType));
+		}
+
+		if (Bot.BotDatabase.MobileAuthenticator == null) {
+			return (false, 0);
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return (false, 0);
+		}
+
+		ImmutableHashSet<Confirmation>? confirmations = await Bot.BotDatabase.MobileAuthenticator.GetConfirmations().ConfigureAwait(false);
+
+		if ((confirmations == null) || (confirmations.Count == 0)) {
+			return (true, 0);
+		}
+
+		uint count = (uint) confirmations.Count(confirmation => confirmation.ConfirmationType == confirmationType);
+
+		return (true, count);
+	}
+
+	[PublicAPI]
 	public static string Hash(ArchiCryptoHelper.EHashingMethod hashingMethod, string stringToHash) {
 		if (!Enum.IsDefined(hashingMethod)) {
 			throw new InvalidEnumArgumentException(nameof(hashingMethod), (int) hashingMethod, typeof(ArchiCryptoHelper.EHashingMethod));
