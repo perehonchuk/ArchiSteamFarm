@@ -45,6 +45,9 @@ public sealed class ParseTradeResult {
 	[PublicAPI]
 	public bool Confirmed { get; internal set; }
 
+	[PublicAPI]
+	public bool Verified { get; internal set; }
+
 	internal ParseTradeResult(ulong tradeOfferID, EResult result, bool requiresMobileConfirmation, IReadOnlyCollection<Asset>? itemsToGive = null, IReadOnlyCollection<Asset>? itemsToReceive = null) {
 		ArgumentOutOfRangeException.ThrowIfZero(tradeOfferID);
 
@@ -55,6 +58,7 @@ public sealed class ParseTradeResult {
 		TradeOfferID = tradeOfferID;
 		Result = result;
 		Confirmed = !requiresMobileConfirmation;
+		Verified = false;
 		ItemsToGive = itemsToGive;
 		ItemsToReceive = itemsToReceive;
 	}

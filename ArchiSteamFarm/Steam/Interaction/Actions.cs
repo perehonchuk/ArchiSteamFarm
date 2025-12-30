@@ -465,7 +465,23 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			await Bot.Trading.AcknowledgeTradeRestrictions().ConfigureAwait(false);
 		}
 
-		(bool success, _, HashSet<ulong>? mobileTradeOfferIDs) = await Bot.ArchiWebHandler.SendTradeOffer(targetSteamID, items, token: tradeToken, customMessage: customMessage, itemsPerTrade: itemsPerTrade).ConfigureAwait(false);
+		(bool success, HashSet<ulong>? tradeOfferIDs, HashSet<ulong>? mobileTradeOfferIDs) = await Bot.ArchiWebHandler.SendTradeOffer(targetSteamID, items, token: tradeToken, customMessage: customMessage, itemsPerTrade: itemsPerTrade).ConfigureAwait(false);
+
+		if (!success) {
+			return (false, Strings.BotLootingFailed);
+		}
+
+		// Verify each trade offer
+		if (tradeOfferIDs?.Count > 0) {
+			Bot.ArchiLogger.LogGenericInfo($"Verifying {tradeOfferIDs.Count} trade offer(s)...");
+
+			List<Task<bool>> verificationTasks = tradeOfferIDs.Select(Bot.Trading.VerifyTradeOffer).ToList();
+			bool[] verificationResults = await Task.WhenAll(verificationTasks).ConfigureAwait(false);
+
+			if (verificationResults.Any(result => !result)) {
+				Bot.ArchiLogger.LogGenericWarning("One or more trade offers failed verification");
+			}
+		}
 
 		if ((mobileTradeOfferIDs?.Count > 0) && Bot.HasMobileAuthenticator) {
 			(bool twoFactorSuccess, _, _) = await HandleTwoFactorAuthenticationConfirmations(true, Confirmation.EConfirmationType.Trade, mobileTradeOfferIDs, true).ConfigureAwait(false);
@@ -475,7 +491,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			}
 		}
 
-		return success ? (true, Strings.BotLootingSuccess) : (false, Strings.BotLootingFailed);
+		return (true, Strings.BotLootingSuccess);
 	}
 
 	[PublicAPI]

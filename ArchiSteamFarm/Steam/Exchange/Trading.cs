@@ -43,12 +43,16 @@ namespace ArchiSteamFarm.Steam.Exchange;
 public sealed class Trading : IDisposable {
 	internal const byte MaxItemsPerTrade = byte.MaxValue; // This is decided upon various factors, mainly stability of Steam servers when dealing with huge trade offers
 	internal const byte MaxTradesPerAccount = 5; // This is limit introduced by Valve
+	internal const byte TradeOfferVerificationRetries = 3; // Maximum number of verification attempts before failing
 
 	private readonly Bot Bot;
 	private readonly ConcurrentHashSet<ulong> HandledTradeOfferIDs = [];
+	private readonly ConcurrentHashSet<ulong> PendingTradeOfferIDs = []; // Trade offers awaiting verification
 	private readonly SemaphoreSlim TradesSemaphore = new(1, 1);
+	private readonly SemaphoreSlim VerificationSemaphore = new(1, 1);
 
 	private bool ParsingScheduled;
+	private bool VerificationScheduled;
 
 	internal Trading(Bot bot) {
 		ArgumentNullException.ThrowIfNull(bot);
@@ -56,7 +60,10 @@ public sealed class Trading : IDisposable {
 		Bot = bot;
 	}
 
-	public void Dispose() => TradesSemaphore.Dispose();
+	public void Dispose() {
+		TradesSemaphore.Dispose();
+		VerificationSemaphore.Dispose();
+	}
 
 	[PublicAPI]
 	public async Task<bool> AcknowledgeTradeRestrictions() {
@@ -213,7 +220,60 @@ public sealed class Trading : IDisposable {
 		return true;
 	}
 
-	internal void OnDisconnected() => HandledTradeOfferIDs.Clear();
+	internal void OnDisconnected() {
+		HandledTradeOfferIDs.Clear();
+		PendingTradeOfferIDs.Clear();
+	}
+
+	internal async Task<bool> VerifyTradeOffer(ulong tradeOfferID) {
+		ArgumentOutOfRangeException.ThrowIfZero(tradeOfferID);
+
+		if (!PendingTradeOfferIDs.Add(tradeOfferID)) {
+			// Trade offer already in verification queue
+			return false;
+		}
+
+		Bot.ArchiLogger.LogGenericInfo($"Trade offer {tradeOfferID} added to verification queue");
+
+		// Perform verification with retries
+		for (byte attempt = 0; attempt < TradeOfferVerificationRetries; attempt++) {
+			if (attempt > 0) {
+				Bot.ArchiLogger.LogGenericInfo($"Retrying verification for trade offer {tradeOfferID}, attempt {attempt + 1}/{TradeOfferVerificationRetries}");
+				await Task.Delay(TimeSpan.FromSeconds(2 * attempt)).ConfigureAwait(false);
+			}
+
+			// Fetch trade offer status
+			HashSet<TradeOffer>? tradeOffers = await Bot.ArchiWebHandler.GetTradeOffers(false, true, false, true).ConfigureAwait(false);
+
+			if (tradeOffers == null) {
+				Bot.ArchiLogger.LogGenericWarning($"Failed to fetch trade offers for verification (attempt {attempt + 1}/{TradeOfferVerificationRetries})");
+				continue;
+			}
+
+			TradeOffer? targetOffer = tradeOffers.FirstOrDefault(offer => offer.TradeOfferID == tradeOfferID);
+
+			if (targetOffer == null) {
+				Bot.ArchiLogger.LogGenericWarning($"Trade offer {tradeOfferID} not found in active offers");
+				continue;
+			}
+
+			// Check if the offer is in a valid state
+			if (targetOffer.State == ETradeOfferState.Active) {
+				Bot.ArchiLogger.LogGenericInfo($"Trade offer {tradeOfferID} verified successfully as {targetOffer.State}");
+				PendingTradeOfferIDs.Remove(tradeOfferID);
+
+				return true;
+			}
+
+			Bot.ArchiLogger.LogGenericWarning($"Trade offer {tradeOfferID} in unexpected state: {targetOffer.State}");
+		}
+
+		// Verification failed after all retries
+		Bot.ArchiLogger.LogGenericError($"Trade offer {tradeOfferID} failed verification after {TradeOfferVerificationRetries} attempts");
+		PendingTradeOfferIDs.Remove(tradeOfferID);
+
+		return false;
+	}
 
 	internal async Task OnNewTrade() {
 		if (Bot.BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.DisableIncomingTradesParsing)) {
