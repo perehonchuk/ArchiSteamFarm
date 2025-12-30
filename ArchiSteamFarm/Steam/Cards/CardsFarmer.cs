@@ -1538,6 +1538,44 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 					};
 
 					break;
+				case BotConfig.EFarmingOrder.PlayTimeEfficiencyAscending:
+				case BotConfig.EFarmingOrder.PlayTimeEfficiencyDescending:
+					byte hoursRequired = Bot.BotConfig.HoursUntilCardDrops;
+					Dictionary<uint, double> efficiencyScores = new(GamesToFarm.Count);
+
+					foreach (Game game in GamesToFarm) {
+						double efficiencyScore;
+
+						if (hoursRequired == 0) {
+							// Simple algorithm: efficiency is just cards remaining
+							efficiencyScore = game.CardsRemaining;
+						} else {
+							// Complex algorithm: calculate efficiency based on cards vs hours needed
+							double hoursNeeded = Math.Max(0, hoursRequired - game.HoursPlayed);
+
+							if (hoursNeeded == 0) {
+								// Game already meets threshold, highest priority (use cards remaining as tiebreaker)
+								efficiencyScore = 1000.0 + game.CardsRemaining;
+							} else {
+								// Calculate cards per hour efficiency
+								efficiencyScore = game.CardsRemaining / hoursNeeded;
+							}
+						}
+
+						efficiencyScores[game.AppID] = efficiencyScore;
+					}
+
+					orderedGamesToFarm = farmingOrder switch {
+						// ReSharper disable once AccessToModifiedClosure - you're wrong
+						BotConfig.EFarmingOrder.PlayTimeEfficiencyAscending => orderedGamesToFarm.ThenBy(game => efficiencyScores[game.AppID]),
+
+						// ReSharper disable once AccessToModifiedClosure - you're wrong
+						BotConfig.EFarmingOrder.PlayTimeEfficiencyDescending => orderedGamesToFarm.ThenByDescending(game => efficiencyScores[game.AppID]),
+
+						_ => throw new InvalidOperationException(nameof(farmingOrder))
+					};
+
+					break;
 				default:
 					Bot.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(farmingOrder), farmingOrder));
 
