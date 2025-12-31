@@ -84,6 +84,7 @@ public static class ASF {
 	internal static FrozenDictionary<Uri, (ICrossProcessSemaphore RateLimitingSemaphore, SemaphoreSlim OpenConnectionsSemaphore)>? WebLimitingSemaphores { get; private set; }
 
 	private static readonly FrozenSet<string> AssembliesNeededBeforeUpdate = FrozenSet.Create(StringComparer.Ordinal, "System.IO.Pipes");
+	private static readonly Random UpdateJitterRandom = new();
 	private static readonly SemaphoreSlim UpdateSemaphore = new(1, 1);
 
 	private static Timer? AutoUpdatesTimer;
@@ -319,7 +320,20 @@ public static class ASF {
 		}
 	}
 
-	private static async void OnAutoUpdatesTimer(object? state = null) => await UpdateAndRestart().ConfigureAwait(false);
+	private static async void OnAutoUpdatesTimer(object? state = null) {
+		if (GlobalConfig == null) {
+			throw new InvalidOperationException(nameof(GlobalConfig));
+		}
+
+		// Add random delay (0 to UpdateStaggerWindow minutes) before executing update to stagger updates across multiple instances
+		int randomDelayMinutes = UpdateJitterRandom.Next(0, GlobalConfig.UpdateStaggerWindow + 1);
+		TimeSpan staggerDelay = TimeSpan.FromMinutes(randomDelayMinutes);
+
+		ArchiLogger.LogGenericDebug($"Update check will execute in {staggerDelay.ToHumanReadable()} to prevent simultaneous updates");
+
+		await Task.Delay(staggerDelay).ConfigureAwait(false);
+		await UpdateAndRestart().ConfigureAwait(false);
+	}
 
 	private static async void OnChanged(object sender, FileSystemEventArgs e) {
 		ArgumentNullException.ThrowIfNull(sender);
@@ -712,11 +726,15 @@ public static class ASF {
 		if ((AutoUpdatesTimer == null) && (GlobalConfig.UpdatePeriod > 0)) {
 			TimeSpan autoUpdatePeriod = TimeSpan.FromHours(GlobalConfig.UpdatePeriod);
 
+			// Add random jitter (±10%) to prevent all ASF instances from updating simultaneously
+			double jitterPercentage = (UpdateJitterRandom.NextDouble() * 0.2) - 0.1; // Random value between -0.1 and +0.1
+			TimeSpan jitteredDelay = autoUpdatePeriod + TimeSpan.FromMilliseconds(autoUpdatePeriod.TotalMilliseconds * jitterPercentage);
+
 			AutoUpdatesTimer = new Timer(
 				OnAutoUpdatesTimer,
 				null,
-				autoUpdatePeriod, // Delay
-				autoUpdatePeriod // Period
+				jitteredDelay, // Delay with jitter
+				autoUpdatePeriod // Period (no jitter for consistency)
 			);
 
 			ArchiLogger.LogGenericInfo(Strings.FormatAutoUpdateCheckInfo(autoUpdatePeriod.ToHumanReadable()));

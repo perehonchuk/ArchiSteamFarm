@@ -130,6 +130,9 @@ public sealed class GlobalConfig {
 	public const byte DefaultUpdatePeriod = 24;
 
 	[PublicAPI]
+	public const byte DefaultUpdateStaggerWindow = 30;
+
+	[PublicAPI]
 	public const ushort DefaultWebLimiterDelay = 300;
 
 	[PublicAPI]
@@ -321,6 +324,10 @@ public sealed class GlobalConfig {
 	public byte UpdatePeriod { get; init; } = DefaultUpdatePeriod;
 
 	[JsonInclude]
+	[Range(byte.MinValue, byte.MaxValue)]
+	public byte UpdateStaggerWindow { get; init; } = DefaultUpdateStaggerWindow;
+
+	[JsonInclude]
 	[Range(ushort.MinValue, ushort.MaxValue)]
 	public ushort WebLimiterDelay { get; init; } = DefaultWebLimiterDelay;
 
@@ -464,6 +471,9 @@ public sealed class GlobalConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeUpdatePeriod() => !Saving || (UpdatePeriod != DefaultUpdatePeriod);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeUpdateStaggerWindow() => !Saving || (UpdateStaggerWindow != DefaultUpdateStaggerWindow);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeWebLimiterDelay() => !Saving || (WebLimiterDelay != DefaultWebLimiterDelay);
