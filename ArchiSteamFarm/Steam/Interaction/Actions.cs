@@ -724,4 +724,21 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			}
 		);
 	}
+
+	[PublicAPI]
+	public bool MatchesBotGroup(string groupName) {
+		ArgumentException.ThrowIfNullOrEmpty(groupName);
+
+		return groupName.ToUpperInvariant() switch {
+			"@ALL" or "ASF" => true,
+			"@FARMING" => Bot.CardsFarmer.NowFarming,
+			"@IDLE" => !Bot.CardsFarmer.NowFarming,
+			"@OFFLINE" => !Bot.IsConnectedAndLoggedOn,
+			"@ONLINE" => Bot.IsConnectedAndLoggedOn,
+			"@PAUSED" => Bot.CardsFarmer.Paused,
+			"@ENABLED" => Bot.BotConfig.Enabled,
+			"@STOPPED" => !Bot.KeepRunning,
+			_ => false
+		};
+	}
 }
