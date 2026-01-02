@@ -56,6 +56,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 	private Timer? CardsFarmerResumeTimer;
 	private bool ProcessingGiftsScheduled;
+	private byte SendTradeRetryCount;
 	private bool TradingScheduled;
 
 	internal Actions(Bot bot) {
@@ -467,6 +468,13 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		(bool success, _, HashSet<ulong>? mobileTradeOfferIDs) = await Bot.ArchiWebHandler.SendTradeOffer(targetSteamID, items, token: tradeToken, customMessage: customMessage, itemsPerTrade: itemsPerTrade).ConfigureAwait(false);
 
+		if (!success) {
+			SendTradeRetryCount++;
+			Bot.ArchiLogger.LogGenericWarning($"Trade offer sending failed (attempt #{SendTradeRetryCount})");
+		} else {
+			SendTradeRetryCount = 0;
+		}
+
 		if ((mobileTradeOfferIDs?.Count > 0) && Bot.HasMobileAuthenticator) {
 			(bool twoFactorSuccess, _, _) = await HandleTwoFactorAuthenticationConfirmations(true, Confirmation.EConfirmationType.Trade, mobileTradeOfferIDs, true).ConfigureAwait(false);
 
@@ -703,7 +711,10 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	internal void OnDisconnected() => HandledGifts.Clear();
+	internal void OnDisconnected() {
+		HandledGifts.Clear();
+		SendTradeRetryCount = 0;
+	}
 
 	private static async Task LimitGiftsRequestsAsync() {
 		if (ASF.GiftsSemaphore == null) {

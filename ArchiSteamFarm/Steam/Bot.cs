@@ -68,9 +68,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	internal const byte MinCardsPerBadge = 5;
 
 	private const char DefaultBackgroundKeysRedeemerSeparator = '\t';
+	private const byte ConnectionRetryBaseDelaySeconds = 5; // Base delay for exponential backoff on connection failures
 	private const byte ExtraStorePackagesValidForDays = 7;
 	private const byte LoginCooldownInMinutes = 25; // Captcha disappears after around 20 minutes, so we make it 25
 	private const uint LoginID = 1242; // This must be the same for all ASF bots and all ASF processes
+	private const byte MaxConnectionRetries = 5; // Max consecutive connection failures before applying exponential backoff cap
 	private const byte MaxLoginFailures = 3; // Max login failures in a row before we determine that our credentials are invalid (because Steam wrongly returns those, of course)
 	private const byte MinimumAccessTokenValidityMinutes = 5;
 	private const byte RedeemCooldownInHours = 1; // 1 hour since first redeem attempt, this is a limitation enforced by Steam
@@ -295,6 +297,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private string? AuthCode;
 	private CancellationTokenSource? CallbacksAborted;
 	private Timer? ConnectionFailureTimer;
+	private byte ConsecutiveConnectionFailures;
+	private DateTime? LastConnectionAttempt;
 	private bool FirstTradeSent;
 	private Timer? GamesRedeemerInBackgroundTimer;
 	private string? IPCountryCode;
@@ -2024,6 +2028,26 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
+		// Apply exponential backoff if we have consecutive connection failures
+		if (ConsecutiveConnectionFailures > 0) {
+			// Calculate exponential backoff delay: base * 2^(failures-1), capped at MaxConnectionRetries
+			byte effectiveFailures = Math.Min(ConsecutiveConnectionFailures, MaxConnectionRetries);
+			int backoffSeconds = ConnectionRetryBaseDelaySeconds * (int)Math.Pow(2, effectiveFailures - 1);
+			TimeSpan requiredDelay = TimeSpan.FromSeconds(backoffSeconds);
+
+			if (LastConnectionAttempt.HasValue) {
+				TimeSpan elapsed = DateTime.UtcNow - LastConnectionAttempt.Value;
+
+				if (elapsed < requiredDelay) {
+					TimeSpan remainingDelay = requiredDelay - elapsed;
+					ArchiLogger.LogGenericWarning($"Delaying connection attempt for {remainingDelay.TotalSeconds:F0} seconds due to {ConsecutiveConnectionFailures} consecutive failures (exponential backoff)");
+					await Task.Delay(remainingDelay).ConfigureAwait(false);
+				}
+			}
+		}
+
+		LastConnectionAttempt = DateTime.UtcNow;
+
 		await LimitLoginRequestsAsync().ConfigureAwait(false);
 
 		if (!KeepRunning || SteamClient.IsConnected) {
@@ -2487,6 +2511,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		AccountFlags = EAccountFlags.NormalUser;
 		AvatarHash = IPCountryCode = Nickname = null;
+		ConsecutiveConnectionFailures = 0;
+		LastConnectionAttempt = null;
 		MasterChatGroupID = 0;
 		RequiredInput = ASF.EUserInputType.None;
 		WalletBalance = 0;
@@ -2713,6 +2739,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		ArgumentNullException.ThrowIfNull(callback);
 
 		HeartBeatFailures = 0;
+		ConsecutiveConnectionFailures = 0;
 		ReconnectOnUserInitiated = false;
 		StopConnectionFailureTimer();
 
@@ -2869,6 +2896,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		if (ASF.LoginRateLimitingSemaphore == null) {
 			throw new InvalidOperationException(nameof(ASF.LoginRateLimitingSemaphore));
+		}
+
+		// Track consecutive connection failures for exponential backoff
+		if (!callback.UserInitiated || ReconnectOnUserInitiated) {
+			ConsecutiveConnectionFailures++;
 		}
 
 		HeartBeatFailures = 0;
