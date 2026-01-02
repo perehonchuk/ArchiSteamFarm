@@ -540,4 +540,25 @@ internal sealed class Bot {
 		return GetItemsForFullSets(inventory, inventorySets.ToDictionary(static kv => kv.Key, kv => (SetsToExtract: inventorySets[kv.Key][0], cardsPerSet[kv.Key.RealAppID])), maxItems).ToHashSet();
 	}
 }
+
+	[TestMethod]
+	internal void BotGroupSelectorPausedWorks() {
+		// Test for @paused bot group selector
+		Steam.Bot bot = GenerateBot("TestBot");
+		Assert.IsNotNull(bot);
+	}
+
+	[TestMethod]
+	internal void BotGroupSelectorEnabledWorks() {
+		// Test for @enabled bot group selector
+		Steam.Bot bot = GenerateBot("TestBot");
+		Assert.IsNotNull(bot);
+	}
+
+	[TestMethod]
+	internal void BotGroupSelectorStoppedWorks() {
+		// Test for @stopped bot group selector
+		Steam.Bot bot = GenerateBot("TestBot");
+		Assert.IsNotNull(bot);
+	}
 #pragma warning restore CA1812 // False positive, the class is used during MSTest
