@@ -150,9 +150,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	[Required]
 	public bool Paused { get; private set; }
 
+	[JsonInclude]
+	[PublicAPI]
+	public bool PermanentlyPaused { get; private set; }
+
 	private TaskCompletionSource<bool>? FarmingResetEvent;
 	private bool ParsingScheduled;
-	private bool PermanentlyPaused;
 	private bool ShouldResumeFarming;
 	private bool ShouldSkipNewGamesIfPossible;
 
