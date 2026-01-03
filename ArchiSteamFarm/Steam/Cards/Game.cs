@@ -48,6 +48,10 @@ public sealed class Game : IEquatable<Game> {
 
 	internal uint PlayableAppID { get; set; }
 
+	// Adaptive farming tracking
+	internal DateTime AdaptiveFarmingStartTime { get; set; } = DateTime.MinValue;
+	internal ushort AdaptiveInitialCardsRemaining { get; set; }
+
 	internal Game(uint appID, string gameName, float hoursPlayed, ushort cardsRemaining, byte badgeLevel) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 		ArgumentException.ThrowIfNullOrEmpty(gameName);

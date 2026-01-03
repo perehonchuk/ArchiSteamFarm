@@ -159,7 +159,6 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private bool ShouldSkipNewGamesIfPossible;
 
 	// Adaptive farming algorithm tracking
-	private readonly ConcurrentDictionary<uint, (DateTime StartTime, ushort InitialCards)> AdaptiveFarmingStats = new();
 	private bool AdaptiveAlgorithmEnabled;
 	private DateTime AdaptiveLastEvaluationTime = DateTime.MinValue;
 
@@ -1585,37 +1584,27 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			return Task.CompletedTask;
 		}
 
-		// Need at least AdaptiveSampleSize games with tracking data
-		if (AdaptiveFarmingStats.Count < AdaptiveSampleSize) {
-			return Task.CompletedTask;
-		}
-
-		// Calculate average drop rate for tracked games
+		// Calculate average drop rate for games being tracked
 		float totalDropRate = 0;
 		int validSamples = 0;
 
-		foreach (KeyValuePair<uint, (DateTime StartTime, ushort InitialCards)> stat in AdaptiveFarmingStats) {
-			TimeSpan farmingDuration = DateTime.UtcNow - stat.Value.StartTime;
+		foreach (Game game in GamesToFarm.Where(static g => g.AdaptiveFarmingStartTime > DateTime.MinValue)) {
+			TimeSpan farmingDuration = DateTime.UtcNow - game.AdaptiveFarmingStartTime;
 
 			if (farmingDuration.TotalHours < 0.5) {
 				// Not enough time to evaluate
 				continue;
 			}
 
-			Game? game = GamesToFarm.FirstOrDefault(g => g.AppID == stat.Key);
-
-			if (game == null) {
-				continue;
-			}
-
-			ushort cardsDropped = (ushort) (stat.Value.InitialCards - game.CardsRemaining);
+			ushort cardsDropped = (ushort) (game.AdaptiveInitialCardsRemaining - game.CardsRemaining);
 			float dropRate = cardsDropped / (float) farmingDuration.TotalHours;
 
 			totalDropRate += dropRate;
 			validSamples++;
 		}
 
-		if (validSamples == 0) {
+		// Need at least AdaptiveSampleSize valid samples
+		if (validSamples < AdaptiveSampleSize) {
 			return Task.CompletedTask;
 		}
 
@@ -1644,12 +1633,21 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			return;
 		}
 
-		AdaptiveFarmingStats[game.AppID] = (DateTime.UtcNow, game.CardsRemaining);
+		// Initialize tracking if not already started
+		if (game.AdaptiveFarmingStartTime == DateTime.MinValue) {
+			game.AdaptiveFarmingStartTime = DateTime.UtcNow;
+			game.AdaptiveInitialCardsRemaining = game.CardsRemaining;
+		}
 	}
 
 	private void StopTrackingGame(uint appID) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 
-		AdaptiveFarmingStats.TryRemove(appID, out _);
+		Game? game = GamesToFarm.FirstOrDefault(g => g.AppID == appID);
+
+		if (game != null) {
+			game.AdaptiveFarmingStartTime = DateTime.MinValue;
+			game.AdaptiveInitialCardsRemaining = 0;
+		}
 	}
 }
