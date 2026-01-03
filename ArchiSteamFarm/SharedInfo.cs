@@ -47,6 +47,7 @@ public static class SharedInfo {
 	internal const string EnvironmentVariableCryptKeyFile = $"{EnvironmentVariableCryptKey}_FILE";
 	internal const string EnvironmentVariableNetworkGroup = $"{ASF}_NETWORK_GROUP";
 	internal const string EnvironmentVariablePath = $"{ASF}_PATH";
+	internal const string EnvironmentVariableProcessPriority = $"{ASF}_PROCESS_PRIORITY";
 	internal const string GithubRepo = $"JustArchiNET/{AssemblyName}";
 	internal const string GlobalConfigFileName = $"{ASF}{JsonConfigExtension}";
 	internal const string GlobalCrashFileName = $"{ASF}.crash";

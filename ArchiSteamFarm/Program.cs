@@ -53,6 +53,7 @@ internal static class Program {
 	internal static bool ConfigWatch { get; private set; } = true;
 	internal static bool IgnoreUnsupportedEnvironment { get; private set; }
 	internal static string? NetworkGroup { get; private set; }
+	internal static ProcessPriorityClass? ProcessPriority { get; private set; }
 	internal static bool RestartAllowed { get; private set; } = true;
 	internal static bool Service { get; private set; }
 	internal static bool ShutdownSequenceInitialized { get; private set; }
@@ -170,6 +171,20 @@ internal static class Program {
 		return true;
 	}
 
+	private static bool HandleProcessPriorityArgument(string priority) {
+		ArgumentException.ThrowIfNullOrEmpty(priority);
+
+		if (!Enum.TryParse(priority, true, out ProcessPriorityClass priorityClass)) {
+			ASF.ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(priority)));
+
+			return false;
+		}
+
+		ProcessPriority = priorityClass;
+
+		return true;
+	}
+
 	private static async Task Init(IReadOnlyCollection<string>? args) {
 		AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
 		AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
@@ -279,6 +294,17 @@ internal static class Program {
 		}
 
 		OS.CoreInit(Minimized, SystemRequired);
+
+		if (ProcessPriority != null) {
+			try {
+				using Process currentProcess = Process.GetCurrentProcess();
+				currentProcess.PriorityClass = ProcessPriority.Value;
+				ASF.ArchiLogger.LogGenericInfo($"Process priority set to: {ProcessPriority.Value}");
+			} catch (Exception e) {
+				ASF.ArchiLogger.LogGenericWarningException(e);
+				ASF.ArchiLogger.LogGenericWarning("Failed to set process priority. Continuing with default priority.");
+			}
+		}
 
 		Console.Title = SharedInfo.ProgramIdentifier;
 		ASF.ArchiLogger.LogGenericInfo(SharedInfo.ProgramIdentifier);
@@ -548,6 +574,7 @@ internal static class Program {
 		bool cryptKeyFileNext = false;
 		bool networkGroupNext = false;
 		bool pathNext = false;
+		bool processPriorityNext = false;
 
 		foreach (string arg in args) {
 			switch (arg.ToUpperInvariant()) {
@@ -595,6 +622,10 @@ internal static class Program {
 					pathNext = true;
 
 					break;
+				case "--PROCESS-PRIORITY" when noArgumentValueNext():
+					processPriorityNext = true;
+
+					break;
 				case "--SERVICE" when noArgumentValueNext():
 					Service = true;
 
@@ -622,6 +653,12 @@ internal static class Program {
 						if (!HandlePathArgument(arg)) {
 							return false;
 						}
+					} else if (processPriorityNext) {
+						processPriorityNext = false;
+
+						if (!HandleProcessPriorityArgument(arg)) {
+							return false;
+						}
 					} else {
 						switch (arg.Length) {
 							case > 16 when arg.StartsWith("--CRYPTKEY-FILE=", StringComparison.OrdinalIgnoreCase):
@@ -644,6 +681,12 @@ internal static class Program {
 								}
 
 								break;
+							case > 18 when arg.StartsWith("--PROCESS-PRIORITY=", StringComparison.OrdinalIgnoreCase):
+								if (!HandleProcessPriorityArgument(arg[19..])) {
+									return false;
+								}
+
+								break;
 							default:
 								ASF.ArchiLogger.LogGenericWarning(Strings.FormatWarningUnknownCommandLineArgument(arg));
 
@@ -657,7 +700,7 @@ internal static class Program {
 
 		return true;
 
-		bool noArgumentValueNext() => !cryptKeyNext && !cryptKeyFileNext && !networkGroupNext && !pathNext;
+		bool noArgumentValueNext() => !cryptKeyNext && !cryptKeyFileNext && !networkGroupNext && !pathNext && !processPriorityNext;
 	}
 
 	private static async Task<bool> ParseEnvironmentVariables() {
@@ -689,6 +732,14 @@ internal static class Program {
 
 			if (!string.IsNullOrEmpty(envNetworkGroup)) {
 				HandleNetworkGroupArgument(envNetworkGroup);
+			}
+
+			string? envProcessPriority = Environment.GetEnvironmentVariable(SharedInfo.EnvironmentVariableProcessPriority);
+
+			if (!string.IsNullOrEmpty(envProcessPriority)) {
+				if (!HandleProcessPriorityArgument(envProcessPriority)) {
+					return false;
+				}
 			}
 		} catch (Exception e) {
 			ASF.ArchiLogger.LogGenericException(e);
