@@ -54,6 +54,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
+	private const byte AdaptiveSampleSize = 3; // Number of games to monitor for adaptive algorithm switching
+	private const float AdaptiveDropRateThreshold = 0.3f; // Minimum cards per hour to stay in Complex mode
 
 	[PublicAPI]
 	public static readonly FrozenSet<uint> SalesBlacklist = [267420, 303700, 335590, 368020, 425280, 480730, 566020, 639900, 762800, 876740, 991980, 1195670, 1343890, 1465680, 1658760, 1797760, 2021850, 2243720, 2459330, 2640280, 2861690, 2861720, 3558920];
@@ -155,6 +157,11 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private bool PermanentlyPaused;
 	private bool ShouldResumeFarming;
 	private bool ShouldSkipNewGamesIfPossible;
+
+	// Adaptive farming algorithm tracking
+	private readonly ConcurrentDictionary<uint, (DateTime StartTime, ushort InitialCards)> AdaptiveFarmingStats = new();
+	private bool AdaptiveAlgorithmEnabled;
+	private DateTime AdaptiveLastEvaluationTime = DateTime.MinValue;
 
 	internal CardsFarmer(Bot bot) {
 		ArgumentNullException.ThrowIfNull(bot);
@@ -781,8 +788,15 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		do {
 			Bot.ArchiLogger.LogGenericInfo(Strings.FormatGamesToIdle(GamesToFarm.Count, GamesToFarm.Sum(static game => game.CardsRemaining), TimeRemaining.ToHumanReadable()));
 
+			// Evaluate adaptive algorithm switching every 30 minutes
+			if ((DateTime.UtcNow - AdaptiveLastEvaluationTime).TotalMinutes >= 30) {
+				await EvaluateAdaptiveAlgorithm().ConfigureAwait(false);
+				AdaptiveLastEvaluationTime = DateTime.UtcNow;
+			}
+
 			// Now the algorithm used for farming depends on whether account is restricted or not
-			if (Bot.BotConfig.HoursUntilCardDrops > 0) {
+			// Adaptive mode can override this if poor performance is detected
+			if ((Bot.BotConfig.HoursUntilCardDrops > 0) && !AdaptiveAlgorithmEnabled) {
 				// If we have restricted card drops, we use complex algorithm
 				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Complex"));
 
@@ -850,8 +864,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 					}
 				}
 			} else {
-				// If we have unrestricted card drops, we use simple algorithm
-				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Simple"));
+				// If we have unrestricted card drops OR adaptive algorithm kicked in, we use simple algorithm
+				if (AdaptiveAlgorithmEnabled) {
+					Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Adaptive-Simple"));
+				} else {
+					Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Simple"));
+				}
 
 				while (GamesToFarm.Count > 0) {
 					// In simple algorithm we're going to farm anything that is playable, regardless of hours
@@ -993,6 +1011,11 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 		CurrentGamesFarming.ReplaceWith(games);
 
+		// Track farming stats for adaptive algorithm
+		foreach (Game game in games) {
+			TrackGameFarmingStart(game);
+		}
+
 		if (games.Count == 1) {
 			Game game = games.First();
 			Bot.ArchiLogger.LogGenericInfo(Strings.FormatNowIdling(game.AppID, game.GameName));
@@ -1013,14 +1036,20 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 		Bot.ArchiLogger.LogGenericInfo(Strings.FormatNowIdling(game.AppID, game.GameName));
 
+		// Track farming stats for adaptive algorithm
+		TrackGameFarmingStart(game);
+
 		bool result = await FarmCards(game).ConfigureAwait(false);
 		CurrentGamesFarming.Clear();
 
 		if (!result) {
+			StopTrackingGame(game.AppID);
+
 			return false;
 		}
 
 		GamesToFarm.Remove(game);
+		StopTrackingGame(game.AppID);
 
 		Bot.ArchiLogger.LogGenericInfo(Strings.FormatIdlingFinishedForGame(game.AppID, game.GameName, TimeSpan.FromHours(game.HoursPlayed).ToHumanReadable()));
 
@@ -1548,5 +1577,79 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		// We must call ToList() here as we can't do in-place replace
 		List<Game> gamesToFarm = orderedGamesToFarm.ToList();
 		GamesToFarm.ReplaceWith(gamesToFarm);
+	}
+
+	private Task EvaluateAdaptiveAlgorithm() {
+		// Only evaluate if we're using Complex algorithm
+		if (Bot.BotConfig.HoursUntilCardDrops == 0) {
+			return Task.CompletedTask;
+		}
+
+		// Need at least AdaptiveSampleSize games with tracking data
+		if (AdaptiveFarmingStats.Count < AdaptiveSampleSize) {
+			return Task.CompletedTask;
+		}
+
+		// Calculate average drop rate for tracked games
+		float totalDropRate = 0;
+		int validSamples = 0;
+
+		foreach (KeyValuePair<uint, (DateTime StartTime, ushort InitialCards)> stat in AdaptiveFarmingStats) {
+			TimeSpan farmingDuration = DateTime.UtcNow - stat.Value.StartTime;
+
+			if (farmingDuration.TotalHours < 0.5) {
+				// Not enough time to evaluate
+				continue;
+			}
+
+			Game? game = GamesToFarm.FirstOrDefault(g => g.AppID == stat.Key);
+
+			if (game == null) {
+				continue;
+			}
+
+			ushort cardsDropped = (ushort) (stat.Value.InitialCards - game.CardsRemaining);
+			float dropRate = cardsDropped / (float) farmingDuration.TotalHours;
+
+			totalDropRate += dropRate;
+			validSamples++;
+		}
+
+		if (validSamples == 0) {
+			return Task.CompletedTask;
+		}
+
+		float averageDropRate = totalDropRate / validSamples;
+
+		// If drop rate is below threshold, switch to Simple algorithm
+		if (averageDropRate < AdaptiveDropRateThreshold) {
+			if (!AdaptiveAlgorithmEnabled) {
+				Bot.ArchiLogger.LogGenericInfo($"Adaptive farming: Switching to Simple algorithm due to low drop rate ({averageDropRate:F2} cards/hour)");
+				AdaptiveAlgorithmEnabled = true;
+			}
+		} else {
+			if (AdaptiveAlgorithmEnabled) {
+				Bot.ArchiLogger.LogGenericInfo($"Adaptive farming: Switching back to Complex algorithm ({averageDropRate:F2} cards/hour)");
+				AdaptiveAlgorithmEnabled = false;
+			}
+		}
+
+		return Task.CompletedTask;
+	}
+
+	private void TrackGameFarmingStart(Game game) {
+		ArgumentNullException.ThrowIfNull(game);
+
+		if (Bot.BotConfig.HoursUntilCardDrops == 0) {
+			return;
+		}
+
+		AdaptiveFarmingStats[game.AppID] = (DateTime.UtcNow, game.CardsRemaining);
+	}
+
+	private void StopTrackingGame(uint appID) {
+		ArgumentOutOfRangeException.ThrowIfZero(appID);
+
+		AdaptiveFarmingStats.TryRemove(appID, out _);
 	}
 }
