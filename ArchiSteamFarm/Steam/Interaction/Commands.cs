@@ -3223,7 +3223,14 @@ public sealed class Commands {
 		}
 
 		if (!Bot.IsConnectedAndLoggedOn) {
-			return (FormatBotResponse(Bot.KeepRunning ? Strings.BotStatusConnecting : Strings.BotStatusNotRunning), Bot);
+			string statusMessage = Bot.BotState switch {
+				Bot.EBotState.WarmingUp => "Warming up...",
+				Bot.EBotState.Preparing => "Preparing...",
+				Bot.EBotState.Connecting => Strings.BotStatusConnecting,
+				_ => Bot.KeepRunning ? Strings.BotStatusConnecting : Strings.BotStatusNotRunning
+			};
+
+			return (FormatBotResponse(statusMessage), Bot);
 		}
 
 		if (Bot.PlayingBlocked) {

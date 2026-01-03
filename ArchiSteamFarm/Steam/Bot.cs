@@ -291,6 +291,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	internal bool PlayingBlocked { get; private set; }
 	internal bool PlayingWasBlocked { get; private set; }
 
+	[JsonInclude]
+	[JsonRequired]
+	[PublicAPI]
+	[Required]
+	public EBotState BotState { get; private set; } = EBotState.Offline;
+
 	private DateTime? AccessTokenValidUntil;
 	private string? AuthCode;
 	private CancellationTokenSource? CallbacksAborted;
@@ -1933,6 +1939,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 			KeepRunning = true;
 
+			// Preparing phase: load authenticator and keys
+			BotState = EBotState.Preparing;
 			ArchiLogger.LogGenericInfo(Strings.Starting);
 
 			// Support and convert 2FA files
@@ -1989,6 +1997,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 
 			KeepRunning = false;
+			BotState = EBotState.Offline;
 
 			ArchiLogger.LogGenericInfo(Strings.BotStopping);
 
@@ -2029,6 +2038,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		if (!KeepRunning || SteamClient.IsConnected) {
 			return;
 		}
+
+		// Connecting phase: establish Steam network connection
+		BotState = EBotState.Connecting;
 
 		LastLogOnResult = EResult.Invalid;
 		ReconnectOnUserInitiated = false;
@@ -2619,6 +2631,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 			return;
 		}
+
+		// Warm-up phase: prepare bot for startup
+		BotState = EBotState.WarmingUp;
+		ArchiLogger.LogGenericInfo($"Bot entering warm-up phase...");
 
 		// Start
 		Utilities.InBackground(Start);
@@ -3425,6 +3441,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
+		// Online phase: bot is fully connected and operational
+		BotState = EBotState.Online;
+		ArchiLogger.LogGenericInfo($"Bot is now online and ready");
+
 		if ((GamesRedeemerInBackgroundTimer == null) && BotDatabase.HasGamesToRedeemInBackground) {
 			Utilities.InBackground(() => RedeemGamesInBackground());
 		}
@@ -4168,6 +4188,14 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		ArchiLogger.LogGenericInfo(Strings.Done);
 
 		return (true, steamParentalCode);
+	}
+
+	public enum EBotState : byte {
+		Offline,
+		WarmingUp,
+		Preparing,
+		Connecting,
+		Online
 	}
 
 	public enum EFileType : byte {
