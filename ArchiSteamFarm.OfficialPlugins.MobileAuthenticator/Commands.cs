@@ -135,24 +135,48 @@ internal static class Commands {
 
 		mobileAuthenticator.Init(bot);
 
-		ulong steamTime = await mobileAuthenticator.GetSteamTime().ConfigureAwait(false);
+		// Implement automatic retry mechanism with exponential backoff
+		const byte maxRetries = 3;
+		const ushort baseDelaySeconds = 30;
+		CTwoFactor_FinalizeAddAuthenticator_Response? response = null;
+		EResult lastResult = EResult.Invalid;
 
-		string? code = mobileAuthenticator.GenerateTokenForTime(steamTime);
+		for (byte attempt = 0; attempt < maxRetries; attempt++) {
+			if (attempt > 0) {
+				// Apply exponential backoff: 30s, 60s, 120s
+				ushort delaySeconds = (ushort) (baseDelaySeconds * Math.Pow(2, attempt - 1));
+				bot.ArchiLogger.LogGenericInfo($"Retrying 2FA finalization in {delaySeconds} seconds (attempt {attempt + 1}/{maxRetries})...");
+				await Task.Delay(TimeSpan.FromSeconds(delaySeconds)).ConfigureAwait(false);
+			}
 
-		if (string.IsNullOrEmpty(code)) {
-			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(nameof(mobileAuthenticator.GenerateTokenForTime)));
+			ulong steamTime = await mobileAuthenticator.GetSteamTime().ConfigureAwait(false);
+
+			string? code = mobileAuthenticator.GenerateTokenForTime(steamTime);
+
+			if (string.IsNullOrEmpty(code)) {
+				return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(nameof(mobileAuthenticator.GenerateTokenForTime)));
+			}
+
+			response = await MobileAuthenticatorWebHandler.FinalizeAuthenticator(bot, activationCode, code, steamTime).ConfigureAwait(false);
+
+			if (response == null) {
+				continue;
+			}
+
+			if (response.success) {
+				break;
+			}
+
+			lastResult = (EResult) response.status;
+			bot.ArchiLogger.LogGenericWarning($"2FA finalization attempt {attempt + 1} failed with status: {lastResult}");
 		}
-
-		CTwoFactor_FinalizeAddAuthenticator_Response? response = await MobileAuthenticatorWebHandler.FinalizeAuthenticator(bot, activationCode, code, steamTime).ConfigureAwait(false);
 
 		if (response == null) {
 			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(nameof(MobileAuthenticatorWebHandler.FinalizeAuthenticator)));
 		}
 
 		if (!response.success) {
-			EResult result = (EResult) response.status;
-
-			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(result));
+			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError($"{lastResult} (after {maxRetries} attempts)"));
 		}
 
 		if (!bot.TryImportAuthenticator(mobileAuthenticator)) {

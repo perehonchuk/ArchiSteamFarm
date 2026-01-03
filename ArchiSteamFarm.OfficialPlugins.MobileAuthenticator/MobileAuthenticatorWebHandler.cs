@@ -127,7 +127,8 @@ internal static class MobileAuthenticatorWebHandler {
 			activation_code = activationCode,
 			authenticator_code = authenticatorCode,
 			authenticator_time = authenticatorTime,
-			steamid = bot.SteamID
+			steamid = bot.SteamID,
+			validate_sms_code = true
 		};
 
 		Dictionary<string, object?> arguments = new(1, StringComparer.Ordinal) {

@@ -88,6 +88,14 @@ internal sealed class MaFileData {
 	[JsonRequired]
 	internal string Uri { get; private init; }
 
+	[JsonInclude]
+	[JsonPropertyName("finalization_attempts")]
+	internal byte FinalizationAttempts { get; set; }
+
+	[JsonInclude]
+	[JsonPropertyName("last_finalization_attempt")]
+	internal DateTime? LastFinalizationAttempt { get; set; }
+
 	internal MaFileData(CTwoFactor_AddAuthenticator_Response data, ulong steamID, string deviceID) {
 		ArgumentNullException.ThrowIfNull(data);
 
@@ -109,5 +117,7 @@ internal sealed class MaFileData {
 		Status = data.status;
 		TokenGid = data.token_gid;
 		Uri = data.uri;
+		FinalizationAttempts = 0;
+		LastFinalizationAttempt = null;
 	}
 }
