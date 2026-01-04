@@ -21,6 +21,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 using JetBrains.Annotations;
@@ -56,6 +57,33 @@ public sealed class Confirmation {
 	[JsonPropertyName("nonce")]
 	[JsonRequired]
 	internal ulong Nonce { get; private init; }
+
+	[JsonIgnore]
+	internal DateTime FirstSeen { get; set; } = DateTime.UtcNow;
+
+	[JsonIgnore]
+	internal int BatchPriority {
+		get {
+			// Calculate priority based on confirmation type and age
+			// Lower values = higher priority
+			int typePriority = ConfirmationType switch {
+				EConfirmationType.Trade => 10,
+				EConfirmationType.Market => 20,
+				EConfirmationType.PhoneNumberChange => 5,
+				EConfirmationType.AccountRecovery => 3,
+				EConfirmationType.ApiKeyRegistration => 15,
+				EConfirmationType.AccountSecurity => 8,
+				EConfirmationType.FamilyJoin => 12,
+				_ => 50
+			};
+
+			// Add age bonus (older confirmations get higher priority)
+			int ageInMinutes = (int) DateTime.UtcNow.Subtract(FirstSeen).TotalMinutes;
+			int agePriority = Math.Max(0, 30 - ageInMinutes); // Subtract up to 30 from priority
+
+			return typePriority - agePriority;
+		}
+	}
 
 	[JsonConstructor]
 	private Confirmation() { }

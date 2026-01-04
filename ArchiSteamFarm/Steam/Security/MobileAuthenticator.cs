@@ -46,6 +46,8 @@ public sealed class MobileAuthenticator : IDisposable {
 	internal const byte CodeDigits = 5;
 
 	private const byte CodeInterval = 30;
+	private const byte MaxBatchSize = 30; // Maximum number of confirmations to process in a single batch
+	private const byte BatchDelaySeconds = 15; // Delay between batches to avoid rate limiting
 
 	// For how many minutes we can assume that SteamTimeDifference is correct
 	private const byte SteamTimeTTL = 15;
@@ -58,6 +60,7 @@ public sealed class MobileAuthenticator : IDisposable {
 	private static int? SteamTimeDifference;
 
 	private readonly ArchiCacheable<string> CachedDeviceID;
+	private readonly Dictionary<ulong, DateTime> ConfirmationTracker = new();
 
 	private Bot? Bot;
 
@@ -198,6 +201,28 @@ public sealed class MobileAuthenticator : IDisposable {
 			Bot.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(confirmation.ConfirmationType), $"{confirmation.ConfirmationType} ({confirmation.ConfirmationTypeName ?? "null"})"));
 		}
 
+		// Track confirmation age for batching
+		DateTime now = DateTime.UtcNow;
+
+		foreach (Confirmation confirmation in response.Confirmations) {
+			if (ConfirmationTracker.TryGetValue(confirmation.ID, out DateTime firstSeen)) {
+				confirmation.FirstSeen = firstSeen;
+			} else {
+				ConfirmationTracker[confirmation.ID] = now;
+				confirmation.FirstSeen = now;
+			}
+		}
+
+		// Clean up old entries (confirmations older than 1 hour)
+		List<ulong> expiredIDs = ConfirmationTracker
+			.Where(kvp => now.Subtract(kvp.Value).TotalHours > 1)
+			.Select(kvp => kvp.Key)
+			.ToList();
+
+		foreach (ulong expiredID in expiredIDs) {
+			ConfirmationTracker.Remove(expiredID);
+		}
+
 		return response.Confirmations;
 	}
 
@@ -244,6 +269,48 @@ public sealed class MobileAuthenticator : IDisposable {
 			throw new ArgumentNullException(nameof(confirmations));
 		}
 
+		if (Bot == null) {
+			throw new InvalidOperationException(nameof(Bot));
+		}
+
+		// Sort confirmations by priority (lower BatchPriority = higher priority)
+		List<Confirmation> sortedConfirmations = confirmations.OrderBy(c => c.BatchPriority).ToList();
+
+		// Process confirmations in batches
+		bool overallSuccess = true;
+		int processedCount = 0;
+
+		while (processedCount < sortedConfirmations.Count) {
+			int batchSize = Math.Min(MaxBatchSize, sortedConfirmations.Count - processedCount);
+			List<Confirmation> batch = sortedConfirmations.GetRange(processedCount, batchSize);
+
+			Bot.ArchiLogger.LogGenericInfo($"Processing confirmation batch {processedCount / MaxBatchSize + 1} with {batch.Count} confirmations (sorted by priority)");
+
+			bool batchSuccess = await ProcessConfirmationBatch(batch, accept).ConfigureAwait(false);
+
+			if (!batchSuccess) {
+				overallSuccess = false;
+				Bot.ArchiLogger.LogGenericWarning($"Batch {processedCount / MaxBatchSize + 1} failed, continuing with next batch...");
+			} else {
+				// Remove successfully processed confirmations from tracker
+				foreach (Confirmation confirmation in batch) {
+					ConfirmationTracker.Remove(confirmation.ID);
+				}
+			}
+
+			processedCount += batchSize;
+
+			// Add delay between batches to avoid rate limiting
+			if (processedCount < sortedConfirmations.Count) {
+				Bot.ArchiLogger.LogGenericInfo($"Waiting {BatchDelaySeconds} seconds before processing next batch...");
+				await Task.Delay(BatchDelaySeconds * 1000).ConfigureAwait(false);
+			}
+		}
+
+		return overallSuccess;
+	}
+
+	private async Task<bool> ProcessConfirmationBatch(IReadOnlyCollection<Confirmation> confirmations, bool accept) {
 		if (Bot == null) {
 			throw new InvalidOperationException(nameof(Bot));
 		}
