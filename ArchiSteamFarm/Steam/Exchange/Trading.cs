@@ -113,6 +113,23 @@ public sealed class Trading : IDisposable {
 	}
 
 	[PublicAPI]
+	public static bool HasDuplicateClassIDsInBothDirections(IReadOnlyCollection<Asset> itemsToGive, IReadOnlyCollection<Asset> itemsToReceive) {
+		if ((itemsToGive == null) || (itemsToGive.Count == 0)) {
+			throw new ArgumentNullException(nameof(itemsToGive));
+		}
+
+		if ((itemsToReceive == null) || (itemsToReceive.Count == 0)) {
+			throw new ArgumentNullException(nameof(itemsToReceive));
+		}
+
+		// Collect all ClassIDs from items we're giving
+		HashSet<ulong> classIDsToGive = itemsToGive.Select(static item => item.ClassID).ToHashSet();
+
+		// Check if any ClassID appears in both directions (potential scam/swap attempt)
+		return itemsToReceive.Any(item => classIDsToGive.Contains(item.ClassID));
+	}
+
+	[PublicAPI]
 	public static bool IsTradeNeutralOrBetter(IReadOnlyCollection<Asset> inventory, IReadOnlyCollection<Asset> itemsToGive, IReadOnlyCollection<Asset> itemsToReceive) {
 		if ((inventory == null) || (inventory.Count == 0)) {
 			throw new ArgumentNullException(nameof(inventory));
@@ -505,6 +522,13 @@ public sealed class Trading : IDisposable {
 		// Decline trade if we're requested to handle any not-accepted item type or if it's not fair games/types exchange
 		if (Bot.BotConfig.MatchableTypes.IsEmpty || !tradeOffer.IsValidSteamItemsRequest(Bot.BotConfig.MatchableTypes) || !IsFairExchange(tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive)) {
 			Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Rejected, $"{nameof(tradeOffer.IsValidSteamItemsRequest)} || {nameof(IsFairExchange)}"));
+
+			return ParseTradeResult.EResult.Rejected;
+		}
+
+		// Decline trade if it contains duplicate ClassIDs being traded in both directions (indicating potential scam attempt)
+		if (HasDuplicateClassIDsInBothDirections(tradeOffer.ItemsToGive, tradeOffer.ItemsToReceive)) {
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Rejected, nameof(HasDuplicateClassIDsInBothDirections)));
 
 			return ParseTradeResult.EResult.Rejected;
 		}
