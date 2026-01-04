@@ -192,6 +192,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	internal ObservableConcurrentDictionary<ulong, DateTime> FriendRequestHistory { get; private init; } = new();
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
 	private BotDatabase(string filePath) : this() {
@@ -209,6 +214,7 @@ public sealed class BotDatabase : GenericDatabase {
 		FarmingRiskyPrioritizedAppIDs.OnModified += OnObjectModified;
 		MatchActivelyBlacklistAppIDs.OnModified += OnObjectModified;
 		TradingBlacklistSteamIDs.OnModified += OnObjectModified;
+		FriendRequestHistory.OnModified += OnObjectModified;
 	}
 
 	[PublicAPI]
@@ -248,6 +254,9 @@ public sealed class BotDatabase : GenericDatabase {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeExtraStorePackagesRefreshedAt() => ExtraStorePackagesRefreshedAt > DateTime.MinValue;
+
+	[UsedImplicitly]
+	public bool ShouldSerializeFriendRequestHistory() => FriendRequestHistory.Count > 0;
 
 	[UsedImplicitly]
 	public bool ShouldSerializeFarmingBlacklistAppIDs() => FarmingBlacklistAppIDs.Count > 0;
@@ -292,6 +301,7 @@ public sealed class BotDatabase : GenericDatabase {
 			FarmingRiskyPrioritizedAppIDs.OnModified -= OnObjectModified;
 			MatchActivelyBlacklistAppIDs.OnModified -= OnObjectModified;
 			TradingBlacklistSteamIDs.OnModified -= OnObjectModified;
+			FriendRequestHistory.OnModified -= OnObjectModified;
 
 			// Those are objects that might be null and the check should be in-place
 			MobileAuthenticator?.Dispose();

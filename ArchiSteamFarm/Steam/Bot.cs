@@ -3018,7 +3018,24 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 							ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiHandler.AddFriend)));
 						}
 
+						BotDatabase.FriendRequestHistory[friend.SteamID] = DateTime.UtcNow;
+
 						break;
+					}
+
+					if (BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.ThrottleFriendRequests)) {
+						if (BotDatabase.FriendRequestHistory.TryGetValue(friend.SteamID, out DateTime lastRequestTime)) {
+							TimeSpan timeSinceLastRequest = DateTime.UtcNow - lastRequestTime;
+							TimeSpan cooldownPeriod = TimeSpan.FromHours(24);
+
+							if (timeSinceLastRequest < cooldownPeriod) {
+								ArchiLogger.LogGenericInfo($"Ignoring friend request from {friend.SteamID} due to throttling (last request {timeSinceLastRequest.TotalHours:F1} hours ago, cooldown {cooldownPeriod.TotalHours} hours)");
+
+								break;
+							}
+						}
+
+						BotDatabase.FriendRequestHistory[friend.SteamID] = DateTime.UtcNow;
 					}
 
 					bool acceptFriendRequest = await PluginsCore.OnBotFriendRequest(this, friend.SteamID).ConfigureAwait(false);
@@ -3047,6 +3064,25 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 					break;
 			}
+		}
+
+		CleanupFriendRequestHistory();
+	}
+
+	private void CleanupFriendRequestHistory() {
+		if (!BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.ThrottleFriendRequests)) {
+			return;
+		}
+
+		DateTime cutoffTime = DateTime.UtcNow - TimeSpan.FromDays(30);
+		List<ulong> expiredEntries = BotDatabase.FriendRequestHistory.Where(kvp => kvp.Value < cutoffTime).Select(kvp => kvp.Key).ToList();
+
+		foreach (ulong steamID in expiredEntries) {
+			BotDatabase.FriendRequestHistory.TryRemove(steamID, out _);
+		}
+
+		if (expiredEntries.Count > 0) {
+			ArchiLogger.LogGenericInfo($"Cleaned up {expiredEntries.Count} expired friend request history entries");
 		}
 	}
 

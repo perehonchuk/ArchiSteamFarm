@@ -712,7 +712,8 @@ public sealed class BotConfig {
 		MarkReceivedMessagesAsRead = 16,
 		MarkBotMessagesAsRead = 32,
 		DisableIncomingTradesParsing = 64,
-		All = RejectInvalidFriendInvites | RejectInvalidTrades | RejectInvalidGroupInvites | DismissInventoryNotifications | MarkReceivedMessagesAsRead | MarkBotMessagesAsRead | DisableIncomingTradesParsing
+		ThrottleFriendRequests = 128,
+		All = RejectInvalidFriendInvites | RejectInvalidTrades | RejectInvalidGroupInvites | DismissInventoryNotifications | MarkReceivedMessagesAsRead | MarkBotMessagesAsRead | DisableIncomingTradesParsing | ThrottleFriendRequests
 	}
 
 	[PublicAPI]
