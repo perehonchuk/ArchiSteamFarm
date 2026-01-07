@@ -161,6 +161,9 @@ public sealed class Commands {
 						return ResponseResume(access);
 					case "RESTART":
 						return ResponseRestart(access);
+					case "RESTARTBOT":
+					case "RBOT":
+						return await ResponseRestartBot(access).ConfigureAwait(false);
 					case "SA":
 						return await ResponseStatus(access, SharedInfo.ASF, steamID).ConfigureAwait(false);
 					case "START":
@@ -314,6 +317,9 @@ public sealed class Commands {
 						return await ResponseRedeemPoints(access, args[1]).ConfigureAwait(false);
 					case "RESET":
 						return await ResponseReset(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "RESTARTBOT":
+					case "RBOT":
+						return await ResponseRestartBot(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "RESUME":
 						return await ResponseResume(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "START":
@@ -3128,6 +3134,40 @@ public sealed class Commands {
 		(bool success, string message) = Actions.Restart();
 
 		return FormatStaticResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private async Task<string?> ResponseRestartBot(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		(bool success, string message) = await Bot.Actions.RestartBot().ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static async Task<string?> ResponseRestartBot(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseRestartBot(GetProxyAccess(bot, access, steamID)))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
 	}
 
 	private string? ResponseResume(EAccess access) {

@@ -48,6 +48,7 @@ using SteamKit2.WebUI.Internal;
 namespace ArchiSteamFarm.Steam.Interaction;
 
 public sealed class Actions : IAsyncDisposable, IDisposable {
+	private const byte RestartCooldownInSeconds = 30;
 	private static readonly SemaphoreSlim GiftCardsSemaphore = new(1, 1);
 
 	private readonly Bot Bot;
@@ -55,6 +56,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	private readonly SemaphoreSlim TradingSemaphore = new(1, 1);
 
 	private Timer? CardsFarmerResumeTimer;
+	private DateTime? LastRestartTime;
 	private bool ProcessingGiftsScheduled;
 	private bool TradingScheduled;
 
@@ -544,6 +546,42 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		}
 
 		await Bot.Stop().ConfigureAwait(false);
+
+		return (true, Strings.Done);
+	}
+
+	[PublicAPI]
+	public async Task<(bool Success, string Message)> RestartBot() {
+		if (!Bot.KeepRunning) {
+			return (false, Strings.BotAlreadyStopped);
+		}
+
+		if (Bot.IsRestarting) {
+			return (false, "Bot is already restarting.");
+		}
+
+		if (LastRestartTime.HasValue) {
+			TimeSpan timeSinceLastRestart = DateTime.UtcNow - LastRestartTime.Value;
+
+			if (timeSinceLastRestart.TotalSeconds < RestartCooldownInSeconds) {
+				int secondsRemaining = RestartCooldownInSeconds - (int) timeSinceLastRestart.TotalSeconds;
+
+				return (false, $"Bot restart is on cooldown. Please wait {secondsRemaining} more second(s).");
+			}
+		}
+
+		LastRestartTime = DateTime.UtcNow;
+		Bot.IsRestarting = true;
+
+		Bot.ArchiLogger.LogGenericInfo($"Restarting bot, will reconnect in {RestartCooldownInSeconds} seconds...");
+
+		await Bot.Stop().ConfigureAwait(false);
+
+		await Task.Delay(TimeSpan.FromSeconds(RestartCooldownInSeconds)).ConfigureAwait(false);
+
+		Bot.IsRestarting = false;
+
+		Utilities.InBackground(Bot.Start);
 
 		return (true, Strings.Done);
 	}

@@ -143,6 +143,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 	[JsonInclude]
 	[PublicAPI]
+	public bool IsRestarting { get; internal set; }
+
+	[JsonInclude]
+	[PublicAPI]
 	public string? PublicIP => SteamClient.PublicIP?.ToString();
 
 	[JsonInclude]
