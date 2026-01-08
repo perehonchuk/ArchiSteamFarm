@@ -147,6 +147,8 @@ public sealed class Commands {
 						return await ResponseLevel(access).ConfigureAwait(false);
 					case "LOOT":
 						return await ResponseLoot(access).ConfigureAwait(false);
+					case "LOOT$" when args.Length > 1:
+						return await ResponseLootByMinAmount(access, args[1]).ConfigureAwait(false);
 					case "MAB":
 						return ResponseMatchActivelyBlacklist(access);
 					case "PAUSE":
@@ -258,6 +260,8 @@ public sealed class Commands {
 						return await ResponseLootByRealAppIDs(access, args[1], Utilities.GetArgsAsText(args, 2, ","), true, steamID).ConfigureAwait(false);
 					case "LOOT%":
 						return await ResponseLootByRealAppIDs(access, args[1], true).ConfigureAwait(false);
+					case "LOOT$" when args.Length > 2:
+						return await ResponseLootByMinAmount(access, args[1], Utilities.GetArgsAsText(args, 2, ","), steamID).ConfigureAwait(false);
 					case "MAB":
 						return await ResponseMatchActivelyBlacklist(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "MABADD" when args.Length > 2:
@@ -352,6 +356,10 @@ public sealed class Commands {
 						return await ResponseTransferByRealAppIDs(access, args[1], args[2], Utilities.GetArgsAsText(message, 3), true, steamID).ConfigureAwait(false);
 					case "TRANSFER%" when args.Length > 2:
 						return await ResponseTransferByRealAppIDs(access, args[1], args[2], true).ConfigureAwait(false);
+					case "TRANSFER$" when args.Length > 3:
+						return await ResponseTransferByMinAmount(access, args[1], args[2], Utilities.GetArgsAsText(message, 3), steamID).ConfigureAwait(false);
+					case "TRANSFER$" when args.Length > 2:
+						return await ResponseTransferByMinAmount(access, args[1], args[2]).ConfigureAwait(false);
 					case "UNPACK":
 						return await ResponseUnpackBoosters(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "UPDATE":
@@ -1870,6 +1878,55 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseLootByRealAppIDs(GetProxyAccess(bot, access, steamID), realAppIDsText, exclude))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponseLootByMinAmount(EAccess access, string minAmountText) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(minAmountText);
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		if (Bot.BotConfig.LootableTypes.Count == 0) {
+			return FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(Bot.BotConfig.LootableTypes)));
+		}
+
+		if (!uint.TryParse(minAmountText, out uint minAmount) || (minAmount == 0)) {
+			return FormatBotResponse(Strings.FormatErrorIsInvalid(nameof(minAmount)));
+		}
+
+		(bool success, string message) = await Bot.Actions.SendInventory(filterFunction: item => Bot.BotConfig.LootableTypes.Contains(item.Type) && (item.Amount >= minAmount)).ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static async Task<string?> ResponseLootByMinAmount(EAccess access, string botNames, string minAmountText, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(minAmountText);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseLootByMinAmount(GetProxyAccess(bot, access, steamID), minAmountText))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
@@ -3617,6 +3674,71 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseTransferByRealAppIDs(GetProxyAccess(bot, access, steamID), realAppIDs, targetBot, exclude))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponseTransferByMinAmount(EAccess access, string minAmountText, string botNameTo) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(minAmountText);
+		ArgumentException.ThrowIfNullOrEmpty(botNameTo);
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		if (Bot.BotConfig.TransferableTypes.Count == 0) {
+			return FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(Bot.BotConfig.TransferableTypes)));
+		}
+
+		if (!uint.TryParse(minAmountText, out uint minAmount) || (minAmount == 0)) {
+			return FormatBotResponse(Strings.FormatErrorIsInvalid(nameof(minAmount)));
+		}
+
+		Bot? targetBot = Bot.GetBot(botNameTo);
+
+		if (targetBot == null) {
+			return access >= EAccess.Owner ? FormatBotResponse(Strings.FormatBotNotFound(botNameTo)) : null;
+		}
+
+		if (!targetBot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.TargetBotNotConnected);
+		}
+
+		if (targetBot.SteamID == Bot.SteamID) {
+			return FormatBotResponse(Strings.BotSendingTradeToYourself);
+		}
+
+		(bool success, string message) = await Bot.Actions.SendInventory(targetSteamID: targetBot.SteamID, filterFunction: item => Bot.BotConfig.TransferableTypes.Contains(item.Type) && (item.Amount >= minAmount)).ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static async Task<string?> ResponseTransferByMinAmount(EAccess access, string botNames, string minAmountText, string botNameTo, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(minAmountText);
+		ArgumentException.ThrowIfNullOrEmpty(botNameTo);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseTransferByMinAmount(GetProxyAccess(bot, access, steamID), minAmountText, botNameTo))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
