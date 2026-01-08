@@ -22,6 +22,7 @@
 // limitations under the License.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.ComponentModel;
@@ -48,14 +49,90 @@ namespace ArchiSteamFarm.Steam.Interaction;
 
 public sealed class Commands {
 	private const ushort SteamTypingStatusDelay = 10 * 1000; // Steam client broadcasts typing status each 10 seconds
+	private const ushort ResponseChunkSize = 2000; // Maximum characters per response chunk for streaming
+	private const ushort ResponseChunkDelay = 500; // Delay in ms between sending response chunks
 
 	private readonly Bot Bot;
 	private readonly Dictionary<uint, string> CachedGamesOwned = new();
+	private readonly ConcurrentDictionary<string, Queue<string>> PaginatedResponses = new();
 
 	internal Commands(Bot bot) {
 		ArgumentNullException.ThrowIfNull(bot);
 
 		Bot = bot;
+	}
+
+	private async Task<string?> ProcessResponseWithStreaming(string? response, ulong steamID) {
+		if (string.IsNullOrEmpty(response) || (response.Length <= ResponseChunkSize)) {
+			return response;
+		}
+
+		// For Steam chat, we need to chunk large responses
+		if (steamID != 0) {
+			List<string> chunks = [];
+			int currentIndex = 0;
+
+			while (currentIndex < response.Length) {
+				int chunkLength = Math.Min(ResponseChunkSize, response.Length - currentIndex);
+				string chunk = response.Substring(currentIndex, chunkLength);
+				chunks.Add(chunk);
+				currentIndex += chunkLength;
+			}
+
+			// Send first chunk immediately
+			if (chunks.Count > 0) {
+				StringBuilder result = new();
+				result.AppendLine(chunks[0]);
+				result.AppendLine($"[Page 1/{chunks.Count}] Use 'more' command to see next page");
+
+				// Store remaining chunks for pagination
+				if (chunks.Count > 1) {
+					string paginationKey = $"{Bot.BotName}:{steamID}";
+					Queue<string> remainingChunks = new(chunks.Skip(1));
+					PaginatedResponses[paginationKey] = remainingChunks;
+				}
+
+				return result.ToString();
+			}
+		}
+
+		return response;
+	}
+
+	private string? ResponseMore(EAccess access, ulong steamID) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.FamilySharing) {
+			return null;
+		}
+
+		if (steamID == 0) {
+			return FormatBotResponse("The 'more' command is only available through Steam chat.");
+		}
+
+		string paginationKey = $"{Bot.BotName}:{steamID}";
+
+		if (!PaginatedResponses.TryGetValue(paginationKey, out Queue<string>? remainingChunks) || (remainingChunks.Count == 0)) {
+			return FormatBotResponse("No more pages available.");
+		}
+
+		string nextChunk = remainingChunks.Dequeue();
+		int currentPage = PaginatedResponses.Values.Sum(q => q.Count) + 1;
+		int totalPages = currentPage + remainingChunks.Count;
+
+		StringBuilder result = new();
+		result.AppendLine(nextChunk);
+
+		if (remainingChunks.Count > 0) {
+			result.AppendLine($"[Page {currentPage}/{totalPages}] Use 'more' command to see next page");
+		} else {
+			PaginatedResponses.TryRemove(paginationKey, out _);
+			result.AppendLine("[End of response]");
+		}
+
+		return FormatBotResponse(result.ToString());
 	}
 
 	[PublicAPI]
@@ -149,6 +226,8 @@ public sealed class Commands {
 						return await ResponseLoot(access).ConfigureAwait(false);
 					case "MAB":
 						return ResponseMatchActivelyBlacklist(access);
+					case "MORE":
+						return ResponseMore(access, steamID);
 					case "PAUSE":
 						return await ResponsePause(access, true).ConfigureAwait(false);
 					case "PAUSE~":
@@ -1732,7 +1811,18 @@ public sealed class Commands {
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
-		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+		string? finalResponse = responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+
+		// Apply streaming for first bot in the list if response is large
+		if ((finalResponse != null) && (steamID != 0) && (finalResponse.Length > ResponseChunkSize)) {
+			Bot? firstBot = bots.FirstOrDefault();
+
+			if (firstBot != null) {
+				return await firstBot.Commands.ProcessResponseWithStreaming(finalResponse, steamID).ConfigureAwait(false);
+			}
+		}
+
+		return finalResponse;
 	}
 
 	private async Task<string?> ResponseLevel(EAccess access) {
@@ -2244,7 +2334,18 @@ public sealed class Commands {
 
 		IEnumerable<string> extraResponses = ownedGamesStats.Select(kv => FormatStaticResponse(Strings.FormatBotOwnsOverviewPerGame(kv.Value.Count, validResults.Count, $"{kv.Key}{(!string.IsNullOrEmpty(kv.Value.GameName) ? $" | {kv.Value.GameName}" : "")}")));
 
-		return string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Concat(extraResponses));
+		string finalResponse = string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Concat(extraResponses));
+
+		// Apply streaming for first bot in the list if response is large
+		if ((steamID != 0) && (finalResponse.Length > ResponseChunkSize)) {
+			Bot? firstBot = bots.FirstOrDefault();
+
+			if (firstBot != null) {
+				return await firstBot.Commands.ProcessResponseWithStreaming(finalResponse, steamID).ConfigureAwait(false);
+			}
+		}
+
+		return finalResponse;
 	}
 
 	private async Task<string?> ResponsePause(EAccess access, bool permanent, string? resumeInSecondsText = null) {
