@@ -55,6 +55,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	private readonly SemaphoreSlim TradingSemaphore = new(1, 1);
 
 	private Timer? CardsFarmerResumeTimer;
+	private Timer? CardsFarmerRestartTimer;
 	private bool ProcessingGiftsScheduled;
 	private bool TradingScheduled;
 
@@ -70,6 +71,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		// Those are objects that might be null and the check should be in-place
 		CardsFarmerResumeTimer?.Dispose();
+		CardsFarmerRestartTimer?.Dispose();
 	}
 
 	public async ValueTask DisposeAsync() {
@@ -79,6 +81,10 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		// Those are objects that might be null and the check should be in-place
 		if (CardsFarmerResumeTimer != null) {
 			await CardsFarmerResumeTimer.DisposeAsync().ConfigureAwait(false);
+		}
+
+		if (CardsFarmerRestartTimer != null) {
+			await CardsFarmerRestartTimer.DisposeAsync().ConfigureAwait(false);
 		}
 	}
 
@@ -412,6 +418,42 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		Utilities.InBackground(() => Bot.CardsFarmer.Resume(true));
 
 		return (true, Strings.BotAutomaticIdlingNowResumed);
+	}
+
+	[PublicAPI]
+	public async Task<(bool Success, string Message)> FarmRestart(ushort restartInSeconds = 0) {
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return (false, Strings.BotNotConnected);
+		}
+
+		if (restartInSeconds > 0) {
+			if (CardsFarmerRestartTimer == null) {
+				CardsFarmerRestartTimer = new Timer(
+					async _ => {
+						if (Bot.CardsFarmer.NowFarming) {
+							await Bot.CardsFarmer.StopFarming().ConfigureAwait(false);
+						}
+
+						Utilities.InBackground(Bot.CardsFarmer.StartFarming);
+					},
+					null,
+					TimeSpan.FromSeconds(restartInSeconds), // Delay
+					Timeout.InfiniteTimeSpan // Period
+				);
+			} else {
+				CardsFarmerRestartTimer.Change(TimeSpan.FromSeconds(restartInSeconds), Timeout.InfiniteTimeSpan);
+			}
+
+			return (true, Strings.FormatBotAutomaticIdlingWillRestart(restartInSeconds));
+		}
+
+		if (Bot.CardsFarmer.NowFarming) {
+			await Bot.CardsFarmer.StopFarming().ConfigureAwait(false);
+		}
+
+		Utilities.InBackground(Bot.CardsFarmer.StartFarming);
+
+		return (true, Strings.Done);
 	}
 
 	[PublicAPI]

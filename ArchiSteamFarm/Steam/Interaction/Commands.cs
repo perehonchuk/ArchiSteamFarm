@@ -135,6 +135,8 @@ public sealed class Commands {
 						return ResponseExit(access);
 					case "FARM":
 						return await ResponseFarm(access).ConfigureAwait(false);
+					case "FARM&" when args.Length > 1:
+						return await ResponseFarmRestart(access, args[1]).ConfigureAwait(false);
 					case "FB":
 						return ResponseFarmingBlacklist(access);
 					case "FQ":
@@ -210,6 +212,8 @@ public sealed class Commands {
 						return ResponseEncrypt(access, args[1], Utilities.GetArgsAsText(message, 2));
 					case "FARM":
 						return await ResponseFarm(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "FARM&" when args.Length > 2:
+						return await ResponseFarmRestart(access, args[1], Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 					case "FB":
 						return await ResponseFarmingBlacklist(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "FBADD" when args.Length > 2:
@@ -1282,6 +1286,47 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseFarm(GetProxyAccess(bot, access, steamID)))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponseFarmRestart(EAccess access, string restartInSecondsText) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(restartInSecondsText);
+
+		if (!ushort.TryParse(restartInSecondsText, out ushort restartInSeconds) || (restartInSeconds == 0)) {
+			return FormatBotResponse(Strings.FormatErrorIsInvalid(nameof(restartInSecondsText)));
+		}
+
+		(bool success, string message) = await Bot.Actions.FarmRestart(restartInSeconds).ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static async Task<string?> ResponseFarmRestart(EAccess access, string botNames, string restartInSecondsText, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(restartInSecondsText);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseFarmRestart(GetProxyAccess(bot, access, steamID), restartInSecondsText))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

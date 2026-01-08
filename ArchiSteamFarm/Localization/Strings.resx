@@ -360,6 +360,9 @@ StackTrace:
 	<data name="BotAutomaticIdlingResumedAlready" xml:space="preserve">
 		<value>Automatic farming is resumed already!</value>
 	</data>
+	<data name="BotAutomaticIdlingWillRestart" xml:space="preserve">
+		<value>Automatic farming will restart in {0} seconds!</value>
+	</data>
 	<data name="BotConnected" xml:space="preserve">
 		<value>Connected to Steam!</value>
 	</data>
