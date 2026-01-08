@@ -85,6 +85,9 @@ public static class SharedInfo {
 	public static readonly string[] RangeIndicators = [".."];
 
 	[PublicAPI]
+	public static readonly string[] BotGroupSelectors = ["@all", "@farming", "@idle", "@offline", "@online", "@paused", "@enabled", "@stopped"];
+
+	[PublicAPI]
 	public static bool IsRuntimeTrimmed => BuildInfo.IsRuntimeTrimmed;
 
 	[field: AllowNull]
