@@ -411,7 +411,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		Utilities.InBackground(() => Bot.CardsFarmer.Resume(true));
 
-		return (true, Strings.BotAutomaticIdlingNowResumed);
+		return (true, $"{Strings.BotAutomaticIdlingNowResumed} (entering warmup phase first)");
 	}
 
 	[PublicAPI]

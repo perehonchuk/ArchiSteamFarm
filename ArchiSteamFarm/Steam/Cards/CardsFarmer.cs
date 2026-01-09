@@ -54,6 +54,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
+	private const byte WarmupDelaySeconds = 30; // How many seconds to wait during warmup phase before starting farming
 
 	[PublicAPI]
 	public static readonly FrozenSet<uint> SalesBlacklist = [267420, 303700, 335590, 368020, 425280, 480730, 566020, 639900, 762800, 876740, 991980, 1195670, 1343890, 1465680, 1658760, 1797760, 2021850, 2243720, 2459330, 2640280, 2861690, 2861720, 3558920];
@@ -149,6 +150,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	[PublicAPI]
 	[Required]
 	public bool Paused { get; private set; }
+
+	[JsonInclude]
+	[JsonRequired]
+	[PublicAPI]
+	[Required]
+	public bool WarmingUp { get; private set; }
 
 	private TaskCompletionSource<bool>? FarmingResetEvent;
 	private bool ParsingScheduled;
@@ -273,6 +280,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Paused = true;
+		WarmingUp = false;
 
 		if (!NowFarming) {
 			return;
@@ -302,6 +310,22 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			return false;
 		}
 
+		// Enter warmup phase before starting farming
+		WarmingUp = true;
+		Bot.ArchiLogger.LogGenericInfo($"Entering warmup phase, will start farming in {WarmupDelaySeconds} seconds...");
+
+		// Perform warmup activities
+		await Task.Delay(TimeSpan.FromSeconds(WarmupDelaySeconds)).ConfigureAwait(false);
+
+		// Check if we were paused again during warmup
+		if (Paused) {
+			WarmingUp = false;
+
+			return false;
+		}
+
+		WarmingUp = false;
+
 		await StartFarming().ConfigureAwait(false);
 
 		return true;
@@ -309,11 +333,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 	internal void SetInitialState(bool paused) {
 		PermanentlyPaused = Paused = paused;
+		WarmingUp = false;
 		ShouldResumeFarming = ShouldSkipNewGamesIfPossible = false;
 	}
 
 	internal async Task StartFarming() {
-		if (NowFarming || Paused || !Bot.IsPlayingPossible) {
+		if (NowFarming || Paused || WarmingUp || !Bot.IsPlayingPossible) {
 			return;
 		}
 
@@ -327,7 +352,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		await FarmingInitializationSemaphore.WaitAsync().ConfigureAwait(false);
 
 		try {
-			if (NowFarming || Paused || !Bot.IsPlayingPossible) {
+			if (NowFarming || Paused || WarmingUp || !Bot.IsPlayingPossible) {
 				return;
 			}
 
@@ -351,7 +376,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			}
 
 			// This is the last moment for final check if we can farm
-			if (Paused || !Bot.IsPlayingPossible) {
+			if (Paused || WarmingUp || !Bot.IsPlayingPossible) {
 				Bot.ArchiLogger.LogGenericInfo(Strings.PlayingNotAvailable);
 
 				return;
