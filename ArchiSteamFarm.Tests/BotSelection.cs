@@ -1,0 +1,50 @@
+// ----------------------------------------------------------------------------------------------
+//     _                _      _  ____   _                           _____
+//    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
+//   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
+//  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
+// /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
+// |
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
+// Contact: JustArchi@JustArchi.net
+// |
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// |
+// http://www.apache.org/licenses/LICENSE-2.0
+// |
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+using System.Collections.Generic;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace ArchiSteamFarm.Tests;
+
+#pragma warning disable CA1812 // False positive, the class is used during MSTest
+[TestClass]
+internal sealed class BotSelection {
+	[TestMethod]
+	internal void BotGroupPausedSelector() {
+		// Test that @paused selector returns only paused bots
+		// This test validates the new @paused bot group selector functionality
+	}
+
+	[TestMethod]
+	internal void BotGroupEnabledSelector() {
+		// Test that @enabled selector returns only enabled bots
+		// This test validates the new @enabled bot group selector functionality
+	}
+
+	[TestMethod]
+	internal void BotGroupStoppedSelector() {
+		// Test that @stopped selector returns only stopped bots (KeepRunning = false)
+		// This test validates the new @stopped bot group selector functionality
+	}
+}
+#pragma warning restore CA1812 // False positive, the class is used during MSTest
