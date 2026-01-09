@@ -44,6 +44,9 @@ namespace ArchiSteamFarm.IPC.Controllers.Api;
 
 [Route("Api/Bot")]
 public sealed class BotController : ArchiController {
+	/// <summary>
+	/// Adds (free) licenses on given bots. Supports bot selectors: @all, @farming, @idle, @offline, @online, @paused, @enabled, @stopped.
+	/// </summary>
 	[EndpointSummary("Adds (free) licenses on given bots")]
 	[HttpPost("{botNames:required}/AddLicense")]
 	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, BotAddLicenseResponse>>>((int) HttpStatusCode.OK)]
@@ -73,6 +76,9 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse<IReadOnlyDictionary<string, BotAddLicenseResponse>>(result));
 	}
 
+	/// <summary>
+	/// Deletes all files related to given bots. Supports bot selectors: @all, @farming, @idle, @offline, @online, @paused, @enabled, @stopped.
+	/// </summary>
 	[EndpointSummary("Deletes all files related to given bots")]
 	[HttpDelete("{botNames:required}")]
 	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
