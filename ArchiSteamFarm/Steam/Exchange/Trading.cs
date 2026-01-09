@@ -290,7 +290,33 @@ public sealed class Trading : IDisposable {
 
 			HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> handledSets = [];
 
-			IEnumerable<Task<ParseTradeResult>> tasks = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID)).Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
+			// Filter active trades that haven't been handled yet
+			IEnumerable<TradeOffer> activeTradeOffers = tradeOffers.Where(tradeOffer => (tradeOffer.State == ETradeOfferState.Active) && HandledTradeOfferIDs.Add(tradeOffer.TradeOfferID));
+
+			// Sort trades by priority if PrioritizeLargeTrades preference is enabled
+			// This ensures larger, more significant trades are evaluated and accepted first before smaller ones
+			// When disabled, trades are processed in their original order (by trade offer ID / creation time)
+			List<TradeOffer> sortedTradeOffers;
+
+			if (Bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.PrioritizeLargeTrades)) {
+				sortedTradeOffers = activeTradeOffers
+					.OrderByDescending(tradeOffer => tradeOffer.ItemsToGive.Count + tradeOffer.ItemsToReceive.Count)
+					.ToList();
+
+				// Log trade processing order with priority information
+				if (sortedTradeOffers.Count > 0) {
+					Bot.ArchiLogger.LogGenericInfo($"Processing {sortedTradeOffers.Count} trade(s) in priority order (largest first)");
+
+					foreach (TradeOffer tradeOffer in sortedTradeOffers) {
+						int totalItems = tradeOffer.ItemsToGive.Count + tradeOffer.ItemsToReceive.Count;
+						Bot.ArchiLogger.LogGenericDebug($"Trade {tradeOffer.TradeOfferID}: {totalItems} total items (giving {tradeOffer.ItemsToGive.Count}, receiving {tradeOffer.ItemsToReceive.Count})");
+					}
+				}
+			} else {
+				sortedTradeOffers = activeTradeOffers.ToList();
+			}
+
+			IEnumerable<Task<ParseTradeResult>> tasks = sortedTradeOffers.Select(tradeOffer => ParseTrade(tradeOffer, handledSets));
 
 			IList<ParseTradeResult> tradeResults = await Utilities.InParallel(tasks).ConfigureAwait(false);
 
