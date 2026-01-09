@@ -917,6 +917,10 @@ public sealed class Commands {
 					redeemFlags |= ERedeemFlags.Validate;
 
 					break;
+				case "P" or "PRIORITY":
+					redeemFlags |= ERedeemFlags.PriorityMode;
+
+					break;
 				default:
 					return FormatBotResponse(Strings.FormatErrorIsInvalid(flag));
 			}
@@ -2614,6 +2618,8 @@ public sealed class Commands {
 
 		StringBuilder response = new();
 
+		bool priorityMode = redeemFlags.HasFlag(ERedeemFlags.PriorityMode);
+
 		using (HashSet<string>.Enumerator keysEnumerator = pendingKeys.GetEnumerator()) {
 			// Initial key
 			string? key = keysEnumerator.MoveNext() ? keysEnumerator.Current : null;
@@ -2622,7 +2628,15 @@ public sealed class Commands {
 			while (!string.IsNullOrEmpty(key)) {
 				string startingKey = key;
 
-				using (IEnumerator<Bot> botsEnumerator = Bot.Bots.Where(bot => (bot.Value != Bot) && bot.Value.IsConnectedAndLoggedOn && ((access >= EAccess.Owner) || ((steamID != 0) && (bot.Value.GetAccess(steamID) >= EAccess.Operator)))).OrderByDescending(bot => Bot.BotsComparer?.Compare(bot.Key, Bot.BotName) > 0).ThenBy(static bot => bot.Key, Bot.BotsComparer).Select(static bot => bot.Value).GetEnumerator()) {
+				IEnumerable<Bot> availableBots = Bot.Bots.Where(bot => (bot.Value != Bot) && bot.Value.IsConnectedAndLoggedOn && ((access >= EAccess.Owner) || ((steamID != 0) && (bot.Value.GetAccess(steamID) >= EAccess.Operator)))).Select(static bot => bot.Value);
+
+				if (priorityMode) {
+					availableBots = availableBots.OrderByDescending(static bot => bot.OwnedPackages.Count).ThenByDescending(static bot => bot.SteamID).ThenBy(static bot => bot.BotName, Bot.BotsComparer);
+				} else {
+					availableBots = availableBots.OrderByDescending(bot => Bot.BotsComparer?.Compare(bot.BotName, Bot.BotName) > 0).ThenBy(static bot => bot.BotName, Bot.BotsComparer);
+				}
+
+				using (IEnumerator<Bot> botsEnumerator = availableBots.GetEnumerator()) {
 					Bot? currentBot = Bot;
 
 					while (!string.IsNullOrEmpty(key) && (currentBot != null)) {
@@ -2741,7 +2755,15 @@ public sealed class Commands {
 
 										bool alreadyHandled = false;
 
-										foreach (Bot innerBot in Bot.Bots.Where(bot => (bot.Value != currentBot) && (!redeemFlags.HasFlag(ERedeemFlags.SkipInitial) || (bot.Value != Bot)) && !triedBots.Contains(bot.Value) && !rateLimitedBots.Contains(bot.Value) && bot.Value.IsConnectedAndLoggedOn && ((access >= EAccess.Owner) || ((steamID != 0) && (bot.Value.GetAccess(steamID) >= EAccess.Operator))) && ((items.Count == 0) || items.Keys.Any(packageID => !bot.Value.OwnedPackages.ContainsKey(packageID)))).OrderBy(static bot => bot.Key, Bot.BotsComparer).Select(static bot => bot.Value)) {
+										IEnumerable<Bot> innerBots = Bot.Bots.Where(bot => (bot.Value != currentBot) && (!redeemFlags.HasFlag(ERedeemFlags.SkipInitial) || (bot.Value != Bot)) && !triedBots.Contains(bot.Value) && !rateLimitedBots.Contains(bot.Value) && bot.Value.IsConnectedAndLoggedOn && ((access >= EAccess.Owner) || ((steamID != 0) && (bot.Value.GetAccess(steamID) >= EAccess.Operator))) && ((items.Count == 0) || items.Keys.Any(packageID => !bot.Value.OwnedPackages.ContainsKey(packageID)))).Select(static bot => bot.Value);
+
+										if (priorityMode) {
+											innerBots = innerBots.OrderByDescending(static bot => bot.OwnedPackages.Count).ThenByDescending(static bot => bot.SteamID).ThenBy(static bot => bot.BotName, Bot.BotsComparer);
+										} else {
+											innerBots = innerBots.OrderBy(static bot => bot.BotName, Bot.BotsComparer);
+										}
+
+										foreach (Bot innerBot in innerBots) {
 											CStore_RegisterCDKey_Response? redeemResponse = await innerBot.Actions.RedeemKey(key).ConfigureAwait(false);
 
 											if (redeemResponse == null) {
@@ -3792,6 +3814,7 @@ public sealed class Commands {
 		ForceKeepMissingGames = 64,
 		SkipKeepMissingGames = 128,
 		ForceAssumeWalletKeyOnBadActivationCode = 256,
-		SkipAssumeWalletKeyOnBadActivationCode = 512
+		SkipAssumeWalletKeyOnBadActivationCode = 512,
+		PriorityMode = 1024
 	}
 }
