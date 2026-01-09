@@ -354,6 +354,14 @@ public sealed class Commands {
 						return await ResponseTransferByRealAppIDs(access, args[1], args[2], true).ConfigureAwait(false);
 					case "UNPACK":
 						return await ResponseUnpackBoosters(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "UNPACK@" when args.Length > 2:
+						return await ResponseUnpackBoostersByAppIDs(access, args[1], Utilities.GetArgsAsText(args, 2, ","), false, steamID).ConfigureAwait(false);
+					case "UNPACK@":
+						return await ResponseUnpackBoostersByAppIDs(access, args[1], false).ConfigureAwait(false);
+					case "UNPACK%" when args.Length > 2:
+						return await ResponseUnpackBoostersByAppIDs(access, args[1], Utilities.GetArgsAsText(args, 2, ","), true, steamID).ConfigureAwait(false);
+					case "UNPACK%":
+						return await ResponseUnpackBoostersByAppIDs(access, args[1], true).ConfigureAwait(false);
 					case "UPDATE":
 						return await ResponseUpdate(access, args[1]).ConfigureAwait(false);
 					case "UPDATEPLUGINS" when args.Length > 2:
@@ -3663,6 +3671,63 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseUnpackBoosters(GetProxyAccess(bot, access, steamID)))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponseUnpackBoostersByAppIDs(EAccess access, string realAppIDsText, bool exclude) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(realAppIDsText);
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		string[] appIDTexts = realAppIDsText.Split(SharedInfo.ListElementSeparators, StringSplitOptions.RemoveEmptyEntries);
+
+		if (appIDTexts.Length == 0) {
+			return FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(realAppIDsText)));
+		}
+
+		HashSet<uint> appIDs = [];
+
+		foreach (string appIDText in appIDTexts) {
+			if (!uint.TryParse(appIDText, out uint appID) || (appID == 0)) {
+				return FormatBotResponse(Strings.FormatErrorParsingObject(nameof(appID)));
+			}
+
+			appIDs.Add(appID);
+		}
+
+		bool result = await Bot.Actions.UnpackBoosterPacks(appIDs, exclude).ConfigureAwait(false);
+
+		return FormatBotResponse(result ? Strings.Success : Strings.Done);
+	}
+
+	private static async Task<string?> ResponseUnpackBoostersByAppIDs(EAccess access, string botNames, string realAppIDsText, bool exclude, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(realAppIDsText);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseUnpackBoostersByAppIDs(GetProxyAccess(bot, access, steamID), realAppIDsText, exclude))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

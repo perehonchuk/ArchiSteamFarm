@@ -549,7 +549,10 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
-	public async Task<bool> UnpackBoosterPacks() {
+	public async Task<bool> UnpackBoosterPacks() => await UnpackBoosterPacks(null, false).ConfigureAwait(false);
+
+	[PublicAPI]
+	public async Task<bool> UnpackBoosterPacks(IReadOnlyCollection<uint>? appIDsFilter, bool exclude) {
 		if (!Bot.IsConnectedAndLoggedOn) {
 			return false;
 		}
@@ -559,7 +562,16 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		// It'd also make sense to run all of this in parallel, but it seems that Steam has a lot of problems with inventory-related parallel requests | https://steamcommunity.com/groups/archiasf/discussions/1/3559414588264550284/
 		try {
-			await foreach (Asset item in Bot.ArchiHandler.GetMyInventoryAsync().Where(static item => item.Type == EAssetType.BoosterPack).ConfigureAwait(false)) {
+			IAsyncEnumerable<Asset> boosters = Bot.ArchiHandler.GetMyInventoryAsync().Where(static item => item.Type == EAssetType.BoosterPack);
+
+			// Apply filtering based on appIDsFilter and exclude flag
+			if (appIDsFilter is { Count: > 0 }) {
+				boosters = exclude
+					? boosters.Where(item => !appIDsFilter.Contains(item.RealAppID))
+					: boosters.Where(item => appIDsFilter.Contains(item.RealAppID));
+			}
+
+			await foreach (Asset item in boosters.ConfigureAwait(false)) {
 				if (!await Bot.ArchiWebHandler.UnpackBooster(item.RealAppID, item.AssetID).ConfigureAwait(false)) {
 					result = false;
 				}
