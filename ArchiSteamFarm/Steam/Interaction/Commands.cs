@@ -1229,7 +1229,17 @@ public sealed class Commands {
 
 		string? encryptedString = Actions.Encrypt(cryptoMethod, stringToEncrypt);
 
-		return FormatStaticResponse(!string.IsNullOrEmpty(encryptedString) ? Strings.FormatResult(encryptedString) : Strings.WarningFailed);
+		if (string.IsNullOrEmpty(encryptedString)) {
+			return FormatStaticResponse(Strings.WarningFailed);
+		}
+
+		// Add integrity verification notice for methods that support it
+		string resultMessage = cryptoMethod switch {
+			ArchiCryptoHelper.ECryptoMethod.AES or ArchiCryptoHelper.ECryptoMethod.ProtectedDataForCurrentUser => $"{Strings.FormatResult(encryptedString)} [Integrity verification: enabled]",
+			_ => Strings.FormatResult(encryptedString)
+		};
+
+		return FormatStaticResponse(resultMessage);
 	}
 
 	private static string? ResponseExit(EAccess access) {

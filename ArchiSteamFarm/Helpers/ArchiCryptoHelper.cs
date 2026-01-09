@@ -43,6 +43,7 @@ public static class ArchiCryptoHelper {
 	private const ushort SteamParentalPbkdf2Iterations = 10000;
 	private const byte SteamParentalSCryptBlocksCount = 8;
 	private const ushort SteamParentalSCryptIterations = 8192;
+	private const byte IntegrityChecksumLength = 32; // SHA256 checksum length
 
 	internal static bool HasDefaultCryptKey { get; private set; } = true;
 
@@ -207,6 +208,26 @@ public static class ArchiCryptoHelper {
 			byte[] decryptedData = Convert.FromBase64String(text);
 			decryptedData = CryptoHelper.SymmetricDecrypt(decryptedData, key);
 
+			// Verify integrity checksum if present
+			if (decryptedData.Length > IntegrityChecksumLength) {
+				int plaintextLength = decryptedData.Length - IntegrityChecksumLength;
+				Span<byte> plaintext = decryptedData.AsSpan(0, plaintextLength);
+				Span<byte> storedChecksum = decryptedData.AsSpan(plaintextLength);
+
+				byte[] computedChecksum = SHA256.HashData(plaintext);
+
+				if (!CryptographicOperations.FixedTimeEquals(storedChecksum, computedChecksum)) {
+					ASF.ArchiLogger.LogGenericWarning("Integrity verification failed for encrypted data. The data may have been corrupted or tampered with.");
+
+					return null;
+				}
+
+				return Encoding.UTF8.GetString(plaintext);
+			}
+
+			// Legacy format without checksum - log warning but allow decryption
+			ASF.ArchiLogger.LogGenericWarning("Decrypting data without integrity verification. Consider re-encrypting with the encrypt command.");
+
 			return Encoding.UTF8.GetString(decryptedData);
 		} catch (Exception e) {
 			ASF.ArchiLogger.LogGenericException(e);
@@ -229,6 +250,26 @@ public static class ArchiCryptoHelper {
 				DataProtectionScope.CurrentUser
 			);
 
+			// Verify integrity checksum if present
+			if (decryptedData.Length > IntegrityChecksumLength) {
+				int plaintextLength = decryptedData.Length - IntegrityChecksumLength;
+				Span<byte> plaintext = decryptedData.AsSpan(0, plaintextLength);
+				Span<byte> storedChecksum = decryptedData.AsSpan(plaintextLength);
+
+				byte[] computedChecksum = SHA256.HashData(plaintext);
+
+				if (!CryptographicOperations.FixedTimeEquals(storedChecksum, computedChecksum)) {
+					ASF.ArchiLogger.LogGenericWarning("Integrity verification failed for encrypted data. The data may have been corrupted or tampered with.");
+
+					return null;
+				}
+
+				return Encoding.UTF8.GetString(plaintext);
+			}
+
+			// Legacy format without checksum - log warning but allow decryption
+			ASF.ArchiLogger.LogGenericWarning("Decrypting data without integrity verification. Consider re-encrypting with the encrypt command.");
+
 			return Encoding.UTF8.GetString(decryptedData);
 		} catch (Exception e) {
 			ASF.ArchiLogger.LogGenericException(e);
@@ -244,6 +285,14 @@ public static class ArchiCryptoHelper {
 			byte[] key = SHA256.HashData(EncryptionKey);
 			byte[] textData = Encoding.UTF8.GetBytes(text);
 
+			// Compute integrity checksum of plaintext
+			byte[] checksum = SHA256.HashData(textData);
+
+			// Append checksum to plaintext before encryption
+			byte[] dataWithChecksum = new byte[textData.Length + checksum.Length];
+			Array.Copy(textData, 0, dataWithChecksum, 0, textData.Length);
+			Array.Copy(checksum, 0, dataWithChecksum, textData.Length, checksum.Length);
+
 			Span<byte> iv = stackalloc byte[16];
 			RandomNumberGenerator.Fill(iv);
 
@@ -254,7 +303,7 @@ public static class ArchiCryptoHelper {
 			aes.Key = key;
 
 			byte[] encryptedIv = aes.EncryptEcb(iv, PaddingMode.None);
-			byte[] encryptedText = aes.EncryptCbc(textData, iv);
+			byte[] encryptedText = aes.EncryptCbc(dataWithChecksum, iv);
 			int encryptedCount = encryptedIv.Length + encryptedText.Length;
 
 			byte[] result = ArrayPool<byte>.Shared.Rent(encryptedCount);
@@ -282,8 +331,18 @@ public static class ArchiCryptoHelper {
 		}
 
 		try {
+			byte[] textData = Encoding.UTF8.GetBytes(text);
+
+			// Compute integrity checksum of plaintext
+			byte[] checksum = SHA256.HashData(textData);
+
+			// Append checksum to plaintext before encryption
+			byte[] dataWithChecksum = new byte[textData.Length + checksum.Length];
+			Array.Copy(textData, 0, dataWithChecksum, 0, textData.Length);
+			Array.Copy(checksum, 0, dataWithChecksum, textData.Length, checksum.Length);
+
 			byte[] encryptedData = ProtectedData.Protect(
-				Encoding.UTF8.GetBytes(text),
+				dataWithChecksum,
 				EncryptionKey,
 				DataProtectionScope.CurrentUser
 			);
