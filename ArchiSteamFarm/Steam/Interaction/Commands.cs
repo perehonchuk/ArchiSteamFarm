@@ -153,6 +153,8 @@ public sealed class Commands {
 						return await ResponsePause(access, true).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, false).ConfigureAwait(false);
+					case "PAUSE!":
+						return await ResponsePauseWithPriority(access, true).ConfigureAwait(false);
 					case "POINTS":
 						return await ResponsePointsBalance(access).ConfigureAwait(false);
 					case "RESET":
@@ -282,6 +284,10 @@ public sealed class Commands {
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID: steamID).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, Utilities.GetArgsAsText(args, 1, ","), false, steamID: steamID).ConfigureAwait(false);
+					case "PAUSE!" when args.Length > 2:
+						return await ResponsePauseWithPriority(access, args[1], true, args[2], steamID).ConfigureAwait(false);
+					case "PAUSE!":
+						return await ResponsePauseWithPriority(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID: steamID).ConfigureAwait(false);
 					case "PAUSE&" when args.Length > 2:
 						return await ResponsePause(access, args[1], true, Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 					case "PAUSE&":
@@ -2285,6 +2291,46 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePause(GetProxyAccess(bot, access, steamID), permanent, resumeInSecondsText))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponsePauseWithPriority(EAccess access, bool permanent, string? priorityText = null) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Operator) {
+			return null;
+		}
+
+		byte priority = 100; // Default priority for pause! command
+
+		if (!string.IsNullOrEmpty(priorityText) && (!byte.TryParse(priorityText, out priority))) {
+			return Strings.FormatErrorIsInvalid(nameof(priorityText));
+		}
+
+		(bool success, string message) = await Bot.Actions.Pause(permanent, 0, priority).ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static async Task<string?> ResponsePauseWithPriority(EAccess access, string botNames, bool permanent, string? priorityText = null, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponsePauseWithPriority(GetProxyAccess(bot, access, steamID), permanent, priorityText))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

@@ -152,6 +152,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 	private TaskCompletionSource<bool>? FarmingResetEvent;
 	private bool ParsingScheduled;
+	private byte PausePriority;
 	private bool PermanentlyPaused;
 	private bool ShouldResumeFarming;
 	private bool ShouldSkipNewGamesIfPossible;
@@ -267,12 +268,19 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	internal async Task Pause(bool permanent) {
+	internal async Task Pause(bool permanent, byte priority = 0) {
+		// Don't allow lower priority pauses to override higher priority ones
+		if (Paused && (priority < PausePriority)) {
+			Bot.ArchiLogger.LogGenericInfo($"Ignoring pause request with priority {priority} because farming is already paused with higher priority {PausePriority}");
+			return;
+		}
+
 		if (permanent) {
 			PermanentlyPaused = true;
 		}
 
 		Paused = true;
+		PausePriority = priority;
 
 		if (!NowFarming) {
 			return;
@@ -281,7 +289,13 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		await StopFarming().ConfigureAwait(false);
 	}
 
-	internal async Task<bool> Resume(bool userAction) {
+	internal async Task<bool> Resume(bool userAction, byte priority = 0) {
+		// Non-user resume requests must have priority >= current pause priority
+		if (!userAction && Paused && (priority < PausePriority)) {
+			Bot.ArchiLogger.LogGenericInfo($"Ignoring resume request with priority {priority} because farming is paused with higher priority {PausePriority}");
+			return false;
+		}
+
 		if (PermanentlyPaused) {
 			if (!userAction) {
 				Bot.ArchiLogger.LogGenericInfo(Strings.IgnoredPermanentPauseEnabled);
@@ -293,6 +307,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Paused = false;
+		PausePriority = 0; // Reset priority when resuming
 
 		if (NowFarming) {
 			return true;
@@ -309,6 +324,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 	internal void SetInitialState(bool paused) {
 		PermanentlyPaused = Paused = paused;
+		PausePriority = 0;
 		ShouldResumeFarming = ShouldSkipNewGamesIfPossible = false;
 	}
 
