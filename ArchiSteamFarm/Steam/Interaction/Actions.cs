@@ -705,6 +705,19 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 	internal void OnDisconnected() => HandledGifts.Clear();
 
+	// Refund Safety Tracking: Get current refund risk status for all tracked games
+	[PublicAPI]
+	public Dictionary<uint, (CardsFarmer.ERefundRiskLevel RiskLevel, DateTime LastChecked)> GetRefundRiskStatus() {
+		Dictionary<uint, (CardsFarmer.ERefundRiskLevel, DateTime)> result = new();
+
+		foreach (KeyValuePair<uint, CardsFarmer.ERefundRiskLevel> entry in Bot.CardsFarmer.RefundRiskLevels) {
+			DateTime lastChecked = Bot.CardsFarmer.RefundRiskLastChecked.TryGetValue(entry.Key, out DateTime checkTime) ? checkTime : DateTime.MinValue;
+			result[entry.Key] = (entry.Value, lastChecked);
+		}
+
+		return result;
+	}
+
 	private static async Task LimitGiftsRequestsAsync() {
 		if (ASF.GiftsSemaphore == null) {
 			throw new InvalidOperationException(nameof(ASF.GiftsSemaphore));

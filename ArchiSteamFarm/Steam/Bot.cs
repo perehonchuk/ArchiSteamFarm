@@ -1137,7 +1137,26 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				DateTime playableIn = mostRecent.AddDays(CardsFarmer.DaysForRefund);
 
 				if (playableIn > DateTime.UtcNow) {
-					return (0, playableIn, false);
+					// Refund Safety Tracking: Calculate risk level based on hours played
+					CardsFarmer.ERefundRiskLevel riskLevel = CalculateRefundRiskLevel(hoursPlayed);
+
+					// Store risk level for tracking (accessed through CardsFarmer)
+					CardsFarmer.RefundRiskLevels[appID] = riskLevel;
+					CardsFarmer.RefundRiskLastChecked[appID] = DateTime.UtcNow;
+
+					// Different handling based on risk level
+					if (riskLevel == CardsFarmer.ERefundRiskLevel.Critical) {
+						// Critical risk - skip entirely
+						ArchiLogger.LogGenericInfo($"Skipping game {appID} - CRITICAL refund risk (hours: {hoursPlayed:F2}/{CardsFarmer.HoursForRefund})");
+						return (0, playableIn, false);
+					} else if (riskLevel == CardsFarmer.ERefundRiskLevel.Warning) {
+						// Warning level - delay but allow with caution
+						ArchiLogger.LogGenericWarning($"Game {appID} in WARNING refund zone (hours: {hoursPlayed:F2}/{CardsFarmer.HoursForRefund}) - will farm with additional safety delays");
+						// Continue to farm but CardsFarmer will apply delays
+					} else {
+						// Safe zone - normal skip behavior
+						return (0, playableIn, false);
+					}
 				}
 			}
 		}
@@ -2645,6 +2664,21 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			_ => !paymentMethod.HasFlag(EPaymentMethod.Complimentary) // Complimentary can also be a flag
 		};
 #pragma warning restore CA2248 // This is actually a fair warning, EPaymentMethod is not a flags enum on itself, but there is nothing we can do about Steam using it like that here
+	}
+
+	// Refund Safety Tracking - calculates risk level based on hours played
+	internal static CardsFarmer.ERefundRiskLevel CalculateRefundRiskLevel(float hoursPlayed) {
+		ArgumentOutOfRangeException.ThrowIfNegative(hoursPlayed);
+
+		if (hoursPlayed >= CardsFarmer.WarningRefundHoursThreshold) {
+			return CardsFarmer.ERefundRiskLevel.Critical;
+		}
+
+		if (hoursPlayed >= CardsFarmer.SafeRefundHoursThreshold) {
+			return CardsFarmer.ERefundRiskLevel.Warning;
+		}
+
+		return CardsFarmer.ERefundRiskLevel.Safe;
 	}
 
 	private async Task JoinMasterChatGroupID() {

@@ -51,6 +51,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	internal const byte DaysForRefund = 14; // In how many days since payment we're allowed to refund
 	internal const byte HoursForRefund = 2; // Up to how many hours we're allowed to play for refund
 
+	// Refund Safety Tracking System - New behavioral feature
+	internal const float SafeRefundHoursThreshold = 1.5f; // Hours played threshold for "safe zone" (below this is safe)
+	internal const float WarningRefundHoursThreshold = 1.75f; // Hours played threshold for "warning zone"
+	internal const byte RefundSafetyCheckIntervalMinutes = 15; // How often to check refund status for active games
+	internal const byte RefundWarningDelaySeconds = 30; // Additional delay when in warning zone
+
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
@@ -130,6 +136,17 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private readonly Timer? IdleFarmingTimer;
 
 	private readonly ConcurrentDictionary<uint, DateTime> LocallyIgnoredAppIDs = new();
+
+	// Refund Safety Tracking - tracks refund risk level for each game
+	internal readonly ConcurrentDictionary<uint, ERefundRiskLevel> RefundRiskLevels = new();
+	internal readonly ConcurrentDictionary<uint, DateTime> RefundRiskLastChecked = new();
+
+	internal enum ERefundRiskLevel : byte {
+		None = 0,      // Not a refundable game or outside refund window
+		Safe = 1,      // Refundable but hours < SafeRefundHoursThreshold
+		Warning = 2,   // Hours between Safe and Warning thresholds
+		Critical = 3   // Hours >= WarningRefundHoursThreshold
+	}
 
 	private IEnumerable<ConcurrentDictionary<uint, DateTime>> SourcesOfIgnoredAppIDs {
 		get {
@@ -902,6 +919,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			}
 
 			TimeSpan timeSpan = TimeSpan.FromMinutes(ASF.GlobalConfig?.FarmingDelay ?? GlobalConfig.DefaultFarmingDelay) + TimeSpan.FromSeconds(ExtraFarmingDelaySeconds);
+
+			// Refund Safety Tracking: Apply additional delay if game is in warning zone
+			if (RefundRiskLevels.TryGetValue(game.AppID, out ERefundRiskLevel riskLevel) && (riskLevel == ERefundRiskLevel.Warning)) {
+				timeSpan += TimeSpan.FromSeconds(RefundWarningDelaySeconds);
+				Bot.ArchiLogger.LogGenericDebug($"Applied {RefundWarningDelaySeconds}s safety delay for game {game.AppID} in WARNING refund zone");
+			}
 
 			try {
 				keepFarming = await FarmingResetEvent.Task.WaitAsync(timeSpan).ConfigureAwait(false);
