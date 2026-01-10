@@ -54,6 +54,15 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
+	private const byte MaxPauseHistoryEntries = 10; // Maximum number of pause history entries to keep
+
+	public enum EPauseReason : byte {
+		Manual = 0,
+		FamilySharing = 1,
+		PlayCommand = 2,
+		Timed = 3,
+		System = 4
+	}
 
 	[PublicAPI]
 	public static readonly FrozenSet<uint> SalesBlacklist = [267420, 303700, 335590, 368020, 425280, 480730, 566020, 639900, 762800, 876740, 991980, 1195670, 1343890, 1465680, 1658760, 1797760, 2021850, 2243720, 2459330, 2640280, 2861690, 2861720, 3558920];
@@ -150,6 +159,18 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	[Required]
 	public bool Paused { get; private set; }
 
+	[JsonInclude]
+	[PublicAPI]
+	public EPauseReason? CurrentPauseReason => Paused ? CurrentPauseReasonInternal : null;
+
+	[JsonInclude]
+	[PublicAPI]
+	public IReadOnlyList<PauseHistoryEntry> PauseHistory => PauseHistoryInternal.AsReadOnly();
+
+	public sealed record PauseHistoryEntry(DateTime Timestamp, EPauseReason Reason, bool IsPermanent, ushort? ResumeInSeconds);
+
+	private readonly List<PauseHistoryEntry> PauseHistoryInternal = new();
+	private EPauseReason CurrentPauseReasonInternal;
 	private TaskCompletionSource<bool>? FarmingResetEvent;
 	private bool ParsingScheduled;
 	private bool PermanentlyPaused;
@@ -267,12 +288,22 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	internal async Task Pause(bool permanent) {
+	internal async Task Pause(bool permanent, EPauseReason reason = EPauseReason.Manual, ushort? resumeInSeconds = null) {
 		if (permanent) {
 			PermanentlyPaused = true;
 		}
 
 		Paused = true;
+		CurrentPauseReasonInternal = reason;
+
+		// Track pause in history
+		PauseHistoryEntry entry = new(DateTime.UtcNow, reason, permanent, resumeInSeconds);
+		PauseHistoryInternal.Add(entry);
+
+		// Keep only the latest entries
+		if (PauseHistoryInternal.Count > MaxPauseHistoryEntries) {
+			PauseHistoryInternal.RemoveAt(0);
+		}
 
 		if (!NowFarming) {
 			return;
