@@ -697,7 +697,47 @@ public static class ASF {
 				break;
 		}
 
-		await Utilities.InParallel(botNames.OrderBy(static botName => botName, Bot.BotsComparer).Select(Bot.RegisterBot)).ConfigureAwait(false);
+		// Load bot configs to determine startup priorities
+		Dictionary<string, byte> botPriorities = new(Bot.BotsComparer);
+
+		foreach (string botName in botNames) {
+			string configFilePath = Bot.GetFilePath(botName, Bot.EFileType.Config);
+
+			if (string.IsNullOrEmpty(configFilePath)) {
+				continue;
+			}
+
+			(BotConfig? botConfig, _) = await BotConfig.Load(configFilePath).ConfigureAwait(false);
+
+			if (botConfig == null) {
+				continue;
+			}
+
+			botPriorities[botName] = botConfig.StartupPriority;
+		}
+
+		// Group bots by priority (lower number = higher priority)
+		var priorityGroups = botNames
+			.GroupBy(botName => botPriorities.GetValueOrDefault(botName, BotConfig.DefaultStartupPriority))
+			.OrderBy(static group => group.Key)
+			.ToList();
+
+		ArchiLogger.LogGenericInfo($"Starting {botNames.Count} bots in {priorityGroups.Count} priority groups...");
+
+		// Register bots sequentially by priority group with delays between groups
+		foreach (var priorityGroup in priorityGroups) {
+			ArchiLogger.LogGenericInfo($"Starting priority {priorityGroup.Key} bots: {string.Join(", ", priorityGroup.OrderBy(static name => name, Bot.BotsComparer))}");
+
+			// Register bots within same priority group in parallel
+			await Utilities.InParallel(priorityGroup.Select(Bot.RegisterBot)).ConfigureAwait(false);
+
+			// Add delay between priority groups to stagger startups
+			if (priorityGroup != priorityGroups.Last()) {
+				int delaySeconds = Math.Max(1, (int) priorityGroup.Key / 20);
+				ArchiLogger.LogGenericInfo($"Waiting {delaySeconds} seconds before starting next priority group...");
+				await Task.Delay(TimeSpan.FromSeconds(delaySeconds)).ConfigureAwait(false);
+			}
+		}
 	}
 
 	private static async Task UpdateAndRestart() {

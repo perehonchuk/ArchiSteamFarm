@@ -258,6 +258,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	public FrozenDictionary<uint, LicenseData> OwnedPackages { get; private set; } = FrozenDictionary<uint, LicenseData>.Empty;
 
 	[JsonInclude]
+	[PublicAPI]
+	public byte StartupPriority => BotConfig.StartupPriority;
+
+	[JsonInclude]
 	[JsonRequired]
 	[PublicAPI]
 	[Required]

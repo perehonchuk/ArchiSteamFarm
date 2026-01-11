@@ -94,6 +94,9 @@ public sealed class BotConfig {
 	public const byte DefaultSendTradePeriod = 0;
 
 	[PublicAPI]
+	public const byte DefaultStartupPriority = 100;
+
+	[PublicAPI]
 	public const string? DefaultSteamLogin = null;
 
 	[PublicAPI]
@@ -265,6 +268,10 @@ public sealed class BotConfig {
 	[JsonInclude]
 	[Range(byte.MinValue, byte.MaxValue)]
 	public byte SendTradePeriod { get; init; } = DefaultSendTradePeriod;
+
+	[JsonInclude]
+	[Range(byte.MinValue, byte.MaxValue)]
+	public byte StartupPriority { get; init; } = DefaultStartupPriority;
 
 	[JsonInclude]
 	public string? SteamLogin {
