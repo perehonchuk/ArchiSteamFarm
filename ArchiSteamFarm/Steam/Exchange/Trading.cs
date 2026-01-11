@@ -109,6 +109,16 @@ public sealed class Trading : IDisposable {
 			}
 		}
 
+		// Additional fairness check: ensure we're receiving enough unique card types
+		// This prevents unfair trades where we give variety but receive many copies of same cards
+		HashSet<ulong> uniqueCardsToGive = itemsToGive.Select(static item => item.ClassID).ToHashSet();
+		HashSet<ulong> uniqueCardsToReceive = itemsToReceive.Select(static item => item.ClassID).ToHashSet();
+
+		// We should receive at least as many unique card types as we're giving
+		if (uniqueCardsToReceive.Count < uniqueCardsToGive.Count) {
+			return false;
+		}
+
 		return true;
 	}
 
@@ -538,6 +548,17 @@ public sealed class Trading : IDisposable {
 
 		// Get sets we're interested in
 		HashSet<(uint RealAppID, EAssetType Type, EAssetRarity Rarity)> wantedSets = tradeOffer.ItemsToGive.Select(static item => (item.RealAppID, item.Type, item.Rarity)).ToHashSet();
+
+		// Validate that we're receiving sufficient variety of unique card types
+		// This prevents accepting trades that would give us many duplicates of the same card
+		HashSet<ulong> uniqueCardsReceiving = tradeOffer.ItemsToReceive.Select(static item => item.ClassID).ToHashSet();
+		const byte minUniqueCardTypes = 3;
+
+		if (uniqueCardsReceiving.Count < minUniqueCardTypes) {
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Rejected, $"Unique card types: {uniqueCardsReceiving.Count} < {minUniqueCardTypes}"));
+
+			return ParseTradeResult.EResult.Rejected;
+		}
 
 		// Now check if it's worth for us to do the trade
 		HashSet<Asset> inventory;

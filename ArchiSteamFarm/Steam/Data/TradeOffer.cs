@@ -81,4 +81,14 @@ public sealed class TradeOffer {
 
 		return ItemsToGive.All(item => item is { AppID: Asset.SteamAppID, ContextID: Asset.SteamCommunityContextID, AssetID: > 0, Amount: > 0, ClassID: > 0, RealAppID: > 0 and not Asset.SteamAppID, Type: > EAssetType.Unknown, Rarity: > EAssetRarity.Unknown } && acceptedTypes.Contains(item.Type));
 	}
+
+	[PublicAPI]
+	public bool HasSufficientCardDiversity(byte minUniqueCards = 3) {
+		ArgumentOutOfRangeException.ThrowIfZero(minUniqueCards);
+
+		// Check if we're receiving enough unique card types (based on ClassID)
+		HashSet<ulong> uniqueCards = ItemsToReceive.Select(static item => item.ClassID).ToHashSet();
+
+		return uniqueCards.Count >= minUniqueCards;
+	}
 }
