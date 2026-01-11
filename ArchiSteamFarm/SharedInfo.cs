@@ -37,6 +37,14 @@ public static class SharedInfo {
 
 	internal const string ArchivalLogsDirectory = "logs";
 	internal const string ASF = nameof(ASF);
+	internal const string BotSelectorAll = "@ALL";
+	internal const string BotSelectorEnabled = "@ENABLED";
+	internal const string BotSelectorFarming = "@FARMING";
+	internal const string BotSelectorIdle = "@IDLE";
+	internal const string BotSelectorOffline = "@OFFLINE";
+	internal const string BotSelectorOnline = "@ONLINE";
+	internal const string BotSelectorPaused = "@PAUSED";
+	internal const string BotSelectorStopped = "@STOPPED";
 	internal const ulong ASFGroupSteamID = 103582791440160998;
 	internal const string AssemblyName = nameof(ArchiSteamFarm);
 	internal const string DatabaseExtension = ".db";
