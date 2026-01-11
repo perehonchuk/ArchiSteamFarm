@@ -45,6 +45,7 @@ namespace ArchiSteamFarm.IPC.Integration;
 [SuppressMessage("ReSharper", "ClassNeverInstantiated.Global")]
 internal sealed class ApiAuthenticationMiddleware {
 	internal const string HeadersField = "Authentication";
+	internal const string ApiKeyHeaderField = "X-API-Key";
 
 	private const byte FailedAuthorizationsCooldownInHours = 1;
 	private const byte MaxFailedAuthorizationAttempts = 5;
@@ -104,6 +105,42 @@ internal sealed class ApiAuthenticationMiddleware {
 		return FailedAuthorizations.TryRemove(ipAddress, out _);
 	}
 
+	private async Task<(HttpStatusCode StatusCode, bool Permanent)> ProcessAuthorizationResult(IPAddress clientIP, bool authorized) {
+		ArgumentNullException.ThrowIfNull(clientIP);
+
+		while (true) {
+			if (AuthorizationTasks.TryGetValue(clientIP, out Task? task)) {
+				await task.ConfigureAwait(false);
+
+				continue;
+			}
+
+			TaskCompletionSource taskCompletionSource = new();
+
+			if (!AuthorizationTasks.TryAdd(clientIP, taskCompletionSource.Task)) {
+				continue;
+			}
+
+			try {
+				byte attempts = FailedAuthorizations.GetValueOrDefault(clientIP);
+
+				if (attempts >= MaxFailedAuthorizationAttempts) {
+					return (HttpStatusCode.Forbidden, false);
+				}
+
+				if (!authorized) {
+					FailedAuthorizations[clientIP] = ++attempts;
+				}
+			} finally {
+				AuthorizationTasks.TryRemove(clientIP, out _);
+
+				taskCompletionSource.SetResult();
+			}
+
+			return (authorized ? HttpStatusCode.OK : HttpStatusCode.Unauthorized, true);
+		}
+	}
+
 	private async Task<(HttpStatusCode StatusCode, bool Permanent)> GetAuthenticationStatus(HttpContext context) {
 		ArgumentNullException.ThrowIfNull(context);
 
@@ -139,6 +176,20 @@ internal sealed class ApiAuthenticationMiddleware {
 			return (ForwardedHeadersOptions.KnownIPNetworks.Any(network => network.Contains(clientIP)) ? HttpStatusCode.OK : HttpStatusCode.Forbidden, true);
 		}
 
+		// First check for API key authentication (preferred method)
+		if (context.Request.Headers.TryGetValue(ApiKeyHeaderField, out StringValues apiKeys)) {
+			string? inputApiKey = apiKeys.FirstOrDefault(static key => !string.IsNullOrEmpty(key));
+
+			if (!string.IsNullOrEmpty(inputApiKey)) {
+				// API keys are compared using constant-time comparison with the hashed password
+				ArchiCryptoHelper.EHashingMethod ipcPasswordFormat = ASF.GlobalConfig != null ? ASF.GlobalConfig.IPCPasswordFormat : GlobalConfig.DefaultIPCPasswordFormat;
+				bool authorized = ArchiCryptoHelper.VerifyHash(ipcPasswordFormat, inputApiKey, ipcPassword);
+
+				return await ProcessAuthorizationResult(clientIP, authorized).ConfigureAwait(false);
+			}
+		}
+
+		// Fall back to traditional password authentication
 		if (!context.Request.Headers.TryGetValue(HeadersField, out StringValues passwords) && !context.Request.Query.TryGetValue("password", out passwords)) {
 			return (HttpStatusCode.Unauthorized, true);
 		}
@@ -153,36 +204,6 @@ internal sealed class ApiAuthenticationMiddleware {
 
 		bool authorized = ArchiCryptoHelper.VerifyHash(ipcPasswordFormat, inputPassword, ipcPassword);
 
-		while (true) {
-			if (AuthorizationTasks.TryGetValue(clientIP, out Task? task)) {
-				await task.ConfigureAwait(false);
-
-				continue;
-			}
-
-			TaskCompletionSource taskCompletionSource = new();
-
-			if (!AuthorizationTasks.TryAdd(clientIP, taskCompletionSource.Task)) {
-				continue;
-			}
-
-			try {
-				attempts = FailedAuthorizations.GetValueOrDefault(clientIP);
-
-				if (attempts >= MaxFailedAuthorizationAttempts) {
-					return (HttpStatusCode.Forbidden, false);
-				}
-
-				if (!authorized) {
-					FailedAuthorizations[clientIP] = ++attempts;
-				}
-			} finally {
-				AuthorizationTasks.TryRemove(clientIP, out _);
-
-				taskCompletionSource.SetResult();
-			}
-
-			return (authorized ? HttpStatusCode.OK : HttpStatusCode.Unauthorized, true);
-		}
+		return await ProcessAuthorizationResult(clientIP, authorized).ConfigureAwait(false);
 	}
 }

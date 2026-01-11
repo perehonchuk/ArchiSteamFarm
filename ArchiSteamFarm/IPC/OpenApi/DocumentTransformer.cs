@@ -52,13 +52,22 @@ internal sealed class DocumentTransformer : IOpenApiDocumentTransformer {
 		document.Info.License.Url = new Uri(SharedInfo.LicenseURL);
 
 		document.Components ??= new OpenApiComponents();
-		document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>(1);
+		document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>(2);
 
 		document.Components.SecuritySchemes.Add(
 			nameof(GlobalConfig.IPCPassword), new OpenApiSecurityScheme {
 				Description = $"{nameof(GlobalConfig.IPCPassword)} authentication using request headers. Check {SharedInfo.ProjectURL}/wiki/IPC#authentication for more info.",
 				In = ParameterLocation.Header,
 				Name = ApiAuthenticationMiddleware.HeadersField,
+				Type = SecuritySchemeType.ApiKey
+			}
+		);
+
+		document.Components.SecuritySchemes.Add(
+			"ApiKey", new OpenApiSecurityScheme {
+				Description = $"API Key authentication using {ApiAuthenticationMiddleware.ApiKeyHeaderField} header. This is an alternative authentication method to {nameof(GlobalConfig.IPCPassword)}. Check {SharedInfo.ProjectURL}/wiki/IPC#authentication for more info.",
+				In = ParameterLocation.Header,
+				Name = ApiAuthenticationMiddleware.ApiKeyHeaderField,
 				Type = SecuritySchemeType.ApiKey
 			}
 		);

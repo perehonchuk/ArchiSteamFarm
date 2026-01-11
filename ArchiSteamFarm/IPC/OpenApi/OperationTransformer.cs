@@ -40,12 +40,22 @@ internal sealed class OperationTransformer : IOpenApiOperationTransformer {
 		ArgumentNullException.ThrowIfNull(context);
 
 		if (context.Description.RelativePath?.StartsWith("Api", StringComparison.OrdinalIgnoreCase) == true) {
-			operation.Security ??= new List<OpenApiSecurityRequirement>(1);
+			operation.Security ??= new List<OpenApiSecurityRequirement>(2);
 
+			// Both authentication methods are alternatives (OR relationship)
 			operation.Security.Add(
 				new OpenApiSecurityRequirement {
 					{
 						new OpenApiSecuritySchemeReference(nameof(GlobalConfig.IPCPassword), context.Document),
+						[]
+					}
+				}
+			);
+
+			operation.Security.Add(
+				new OpenApiSecurityRequirement {
+					{
+						new OpenApiSecuritySchemeReference("ApiKey", context.Document),
 						[]
 					}
 				}
