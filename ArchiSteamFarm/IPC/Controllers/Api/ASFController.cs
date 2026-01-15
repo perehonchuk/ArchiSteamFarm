@@ -211,5 +211,14 @@ public sealed class ASFController : ArchiController {
 
 			return Ok(new GenericResponse<string>(success, message, version?.ToString()));
 		}
+
+		[EndpointSummary("Fetches available bot group selectors")]
+		[HttpGet("BotGroupSelectors")]
+		[ProducesResponseType<GenericResponse<IReadOnlySet<string>>>((int) HttpStatusCode.OK)]
+		public ActionResult<GenericResponse<IReadOnlySet<string>>> BotGroupSelectorsGet() {
+			IReadOnlySet<string> botGroupSelectors = Steam.Bot.GetBotGroupSelectors();
+
+			return Ok(new GenericResponse<IReadOnlySet<string>>(botGroupSelectors));
+		}
 	}
 }

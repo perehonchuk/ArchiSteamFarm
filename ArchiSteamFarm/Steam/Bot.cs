@@ -524,6 +524,21 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public static IReadOnlySet<string> GetBotGroupSelectors() {
+		return new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+			"@all",
+			SharedInfo.ASF,
+			"@farming",
+			"@idle",
+			"@offline",
+			"@online",
+			"@paused",
+			"@enabled",
+			"@stopped"
+		};
+	}
+
+	[PublicAPI]
 	public static HashSet<Bot>? GetBots(string args) {
 		ArgumentException.ThrowIfNullOrEmpty(args);
 
