@@ -1046,6 +1046,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		ArchiLogger.LogGenericInfo(Strings.BotAccountFree);
 
+		// Reset command clears PlayCommand pause reason, allowing forced resume
+		Actions.ClearPauseContext();
+
 		if (!await CardsFarmer.Resume(false).ConfigureAwait(false)) {
 			await ResetGamesPlayed().ConfigureAwait(false);
 		}

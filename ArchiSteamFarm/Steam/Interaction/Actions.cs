@@ -55,13 +55,33 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	private readonly SemaphoreSlim TradingSemaphore = new(1, 1);
 
 	private Timer? CardsFarmerResumeTimer;
+	private EPauseReason CurrentPauseReason = EPauseReason.None;
+	private DateTime? PausedAt;
 	private bool ProcessingGiftsScheduled;
 	private bool TradingScheduled;
+
+	public enum EPauseReason : byte {
+		None = 0,
+		Manual = 1,
+		FamilySharing = 2,
+		PlayCommand = 3,
+		Trading = 4
+	}
 
 	internal Actions(Bot bot) {
 		ArgumentNullException.ThrowIfNull(bot);
 
 		Bot = bot;
+	}
+
+	internal void ClearPauseContext() {
+		CurrentPauseReason = EPauseReason.None;
+		PausedAt = null;
+	}
+
+	[PublicAPI]
+	public (EPauseReason Reason, DateTime? PausedAt) GetPauseInfo() {
+		return (CurrentPauseReason, PausedAt);
 	}
 
 	public void Dispose() {
@@ -294,12 +314,16 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
-	public async Task<(bool Success, string Message)> Pause(bool permanent, ushort resumeInSeconds = 0) {
+	public async Task<(bool Success, string Message)> Pause(bool permanent, ushort resumeInSeconds = 0, EPauseReason reason = EPauseReason.Manual) {
 		if (Bot.CardsFarmer.Paused) {
 			return (false, Strings.BotAutomaticIdlingPausedAlready);
 		}
 
 		await Bot.CardsFarmer.Pause(permanent).ConfigureAwait(false);
+
+		// Track pause context for intelligent resume behavior
+		CurrentPauseReason = reason;
+		PausedAt = DateTime.UtcNow;
 
 		if (!permanent && (Bot.BotConfig.GamesPlayedWhileIdle.Count > 0)) {
 			// We want to let family sharing users access our library, and in this case we must also stop GamesPlayedWhileIdle
@@ -335,7 +359,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		}
 
 		if (!Bot.CardsFarmer.Paused) {
-			await Bot.CardsFarmer.Pause(true).ConfigureAwait(false);
+			await Pause(true, 0, EPauseReason.PlayCommand).ConfigureAwait(false);
 		}
 
 		await Bot.ArchiHandler.PlayGames(gameIDs, gameName).ConfigureAwait(false);
@@ -404,14 +428,48 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
-	public (bool Success, string Message) Resume() {
+	public (bool Success, string Message) Resume(bool force = false) {
 		if (!Bot.CardsFarmer.Paused) {
 			return (false, Strings.BotAutomaticIdlingResumedAlready);
 		}
 
+		// Context-aware resume: check if it's appropriate to resume based on pause reason
+		if (!force && ShouldPreventAutoResume()) {
+			string message = CurrentPauseReason switch {
+				EPauseReason.PlayCommand => "Cannot auto-resume: Bot is in manual play mode. Use 'reset' command first.",
+				EPauseReason.Trading => "Cannot auto-resume: Bot is currently processing trades.",
+				_ => "Cannot auto-resume: Bot was paused for a reason that requires manual intervention."
+			};
+
+			return (false, message);
+		}
+
+		// Clear pause context when resuming
+		CurrentPauseReason = EPauseReason.None;
+		PausedAt = null;
+
 		Utilities.InBackground(() => Bot.CardsFarmer.Resume(true));
 
 		return (true, Strings.BotAutomaticIdlingNowResumed);
+	}
+
+	private bool ShouldPreventAutoResume() {
+		// Prevent auto-resume for certain pause reasons unless forced
+		switch (CurrentPauseReason) {
+			case EPauseReason.PlayCommand:
+				// Manual play mode should not auto-resume
+				return true;
+			case EPauseReason.Trading:
+				// Trading pause should not auto-resume if still processing
+				return TradingScheduled;
+			case EPauseReason.Manual:
+				// Manual pauses can auto-resume after sufficient time
+				return PausedAt.HasValue && (DateTime.UtcNow - PausedAt.Value).TotalMinutes < 5;
+			case EPauseReason.FamilySharing:
+			case EPauseReason.None:
+			default:
+				return false;
+		}
 	}
 
 	[PublicAPI]
