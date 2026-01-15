@@ -779,6 +779,7 @@ public sealed class BotConfig {
 		MatchEverything = 4,
 		DontAcceptBotTrades = 8,
 		MatchActively = 16,
-		All = AcceptDonations | SteamTradeMatcher | MatchEverything | DontAcceptBotTrades | MatchActively
+		PrioritizeConfirmations = 32,
+		All = AcceptDonations | SteamTradeMatcher | MatchEverything | DontAcceptBotTrades | MatchActively | PrioritizeConfirmations
 	}
 }

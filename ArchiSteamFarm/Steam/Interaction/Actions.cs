@@ -50,6 +50,19 @@ namespace ArchiSteamFarm.Steam.Interaction;
 public sealed class Actions : IAsyncDisposable, IDisposable {
 	private static readonly SemaphoreSlim GiftCardsSemaphore = new(1, 1);
 
+	// Priority mapping for confirmation types (lower number = higher priority)
+	private static readonly ImmutableDictionary<Confirmation.EConfirmationType, byte> ConfirmationTypePriorities = new Dictionary<Confirmation.EConfirmationType, byte> {
+		{ Confirmation.EConfirmationType.Trade, 1 },              // Highest priority - time-sensitive trades
+		{ Confirmation.EConfirmationType.Market, 2 },             // Market transactions
+		{ Confirmation.EConfirmationType.Generic, 3 },            // General confirmations
+		{ Confirmation.EConfirmationType.PhoneNumberChange, 4 },  // Account security changes
+		{ Confirmation.EConfirmationType.AccountRecovery, 5 },    // Recovery operations
+		{ Confirmation.EConfirmationType.ApiKeyRegistration, 6 }, // API key operations
+		{ Confirmation.EConfirmationType.FamilyJoin, 7 },         // Family sharing
+		{ Confirmation.EConfirmationType.AccountSecurity, 8 },    // Security settings
+		{ Confirmation.EConfirmationType.Unknown, 9 }             // Lowest priority - unknown types
+	}.ToImmutableDictionary();
+
 	private readonly Bot Bot;
 	private readonly ConcurrentHashSet<ulong> HandledGifts = [];
 	private readonly SemaphoreSlim TradingSemaphore = new(1, 1);
@@ -62,6 +75,12 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		ArgumentNullException.ThrowIfNull(bot);
 
 		Bot = bot;
+	}
+
+	private static byte GetConfirmationPriority(Confirmation.EConfirmationType confirmationType) {
+		// Return the priority value for the given confirmation type
+		// Lower value = higher priority (will be processed first)
+		return ConfirmationTypePriorities.TryGetValue(confirmationType, out byte priority) ? priority : (byte) 9;
 	}
 
 	public void Dispose() {
@@ -257,23 +276,57 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 				}
 			}
 
-			if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(remainingConfirmations, accept).ConfigureAwait(false)) {
-				return (false, handledConfirmations?.Values, Strings.WarningFailed);
-			}
+			// Check if priority-based confirmation handling is enabled
+			bool usePriorityHandling = Bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.PrioritizeConfirmations);
 
-			handledConfirmations ??= new Dictionary<ulong, Confirmation>();
+			if (usePriorityHandling) {
+				// Sort confirmations by priority before handling
+				// Higher priority confirmations (lower priority value) are processed first
+				List<Confirmation> prioritizedConfirmations = remainingConfirmations
+					.OrderBy(confirmation => GetConfirmationPriority(confirmation.ConfirmationType))
+					.ThenBy(confirmation => confirmation.ID)
+					.ToList();
 
-			foreach (Confirmation confirmation in remainingConfirmations) {
-				handledConfirmations[confirmation.CreatorID] = confirmation;
+				// Process confirmations one by one in priority order to ensure high-priority items are handled first
+				// This is critical for time-sensitive operations like trades
+				foreach (Confirmation confirmation in prioritizedConfirmations) {
+					HashSet<Confirmation> singleConfirmation = [confirmation];
+
+					if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(singleConfirmation, accept).ConfigureAwait(false)) {
+						// If a single confirmation fails, we still continue with the rest
+						// but we log the failure for this specific confirmation
+						Bot.ArchiLogger.LogGenericWarning($"Failed to handle confirmation {confirmation.ID} of type {confirmation.ConfirmationType}");
+
+						continue;
+					}
+
+					handledConfirmations ??= new Dictionary<ulong, Confirmation>();
+					handledConfirmations[confirmation.CreatorID] = confirmation;
+				}
+			} else {
+				// Original batch handling logic - process all confirmations at once
+				if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(remainingConfirmations, accept).ConfigureAwait(false)) {
+					return (false, handledConfirmations?.Values, Strings.WarningFailed);
+				}
+
+				handledConfirmations ??= new Dictionary<ulong, Confirmation>();
+
+				foreach (Confirmation confirmation in remainingConfirmations) {
+					handledConfirmations[confirmation.CreatorID] = confirmation;
+				}
 			}
 
 			// We've accepted *something*, if caller didn't specify the IDs, that's enough for us
 			if ((acceptedCreatorIDs == null) || (acceptedCreatorIDs.Count == 0)) {
-				return (true, handledConfirmations.Values, Strings.FormatBotHandledConfirmations(handledConfirmations.Count));
+				if (handledConfirmations != null) {
+					return (true, handledConfirmations.Values, Strings.FormatBotHandledConfirmations(handledConfirmations.Count));
+				}
+
+				continue;
 			}
 
 			// If they did, check if we've already found everything we were supposed to
-			if ((handledConfirmations.Count >= acceptedCreatorIDs.Count) && acceptedCreatorIDs.All(handledConfirmations.ContainsKey)) {
+			if ((handledConfirmations != null) && (handledConfirmations.Count >= acceptedCreatorIDs.Count) && acceptedCreatorIDs.All(handledConfirmations.ContainsKey)) {
 				return (true, handledConfirmations.Values, Strings.FormatBotHandledConfirmations(handledConfirmations.Count));
 			}
 		}
