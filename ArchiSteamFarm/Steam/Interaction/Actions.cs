@@ -301,6 +301,11 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		await Bot.CardsFarmer.Pause(permanent).ConfigureAwait(false);
 
+		// Save permanent pause state to database for persistence across restarts
+		if (permanent) {
+			Bot.BotDatabase.FarmingPausedPermanently = true;
+		}
+
 		if (!permanent && (Bot.BotConfig.GamesPlayedWhileIdle.Count > 0)) {
 			// We want to let family sharing users access our library, and in this case we must also stop GamesPlayedWhileIdle
 			// We add extra delay because OnFarmingStopped() also executes PlayGames()
@@ -408,6 +413,9 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		if (!Bot.CardsFarmer.Paused) {
 			return (false, Strings.BotAutomaticIdlingResumedAlready);
 		}
+
+		// Clear persistent pause state from database
+		Bot.BotDatabase.FarmingPausedPermanently = false;
 
 		Utilities.InBackground(() => Bot.CardsFarmer.Resume(true));
 

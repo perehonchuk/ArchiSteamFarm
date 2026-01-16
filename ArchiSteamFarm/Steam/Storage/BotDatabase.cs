@@ -114,6 +114,21 @@ public sealed class BotDatabase : GenericDatabase {
 		}
 	}
 
+	[JsonInclude]
+	[JsonPropertyName("BackingFarmingPausedPermanently")]
+	internal bool FarmingPausedPermanently {
+		get;
+
+		set {
+			if (field == value) {
+				return;
+			}
+
+			field = value;
+			Utilities.InBackground(Save);
+		}
+	}
+
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
@@ -251,6 +266,9 @@ public sealed class BotDatabase : GenericDatabase {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeFarmingBlacklistAppIDs() => FarmingBlacklistAppIDs.Count > 0;
+
+	[UsedImplicitly]
+	public bool ShouldSerializeFarmingPausedPermanently() => FarmingPausedPermanently;
 
 	[UsedImplicitly]
 	public bool ShouldSerializeFarmingPriorityQueueAppIDs() => FarmingPriorityQueueAppIDs.Count > 0;

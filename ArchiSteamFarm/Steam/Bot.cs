@@ -2517,7 +2517,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			RefreshToken = null;
 		}
 
-		CardsFarmer.SetInitialState(BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmingPausedByDefault));
+		// Restore persistent pause state from database if it was previously set, otherwise use config default
+	bool shouldPause = BotDatabase.FarmingPausedPermanently || BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmingPausedByDefault);
+	CardsFarmer.SetInitialState(shouldPause);
 
 		if (SendItemsTimer != null) {
 			await SendItemsTimer.DisposeAsync().ConfigureAwait(false);
