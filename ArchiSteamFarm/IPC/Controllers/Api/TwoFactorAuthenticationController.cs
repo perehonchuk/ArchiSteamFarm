@@ -65,6 +65,12 @@ public sealed class TwoFactorAuthenticationController : ArchiController {
 		return Ok(new GenericResponse<IReadOnlyDictionary<string, GenericResponse<IReadOnlyCollection<Confirmation>>>>(result));
 	}
 
+	/// <summary>
+	/// Handles 2FA confirmations of given bots, requires ASF 2FA module to be active on them.
+	/// Confirmations are processed in priority order based on their type:
+	/// AccountSecurity (highest priority), PhoneNumberChange/FamilyJoin, Trade, Market, AccountRecovery/ApiKeyRegistration, Generic/Unknown (lowest priority).
+	/// Confirmations with explicitly requested CreatorIDs receive additional priority boost.
+	/// </summary>
 	[EndpointSummary("Handles 2FA confirmations of given bots, requires ASF 2FA module to be active on them")]
 	[HttpPost("Confirmations")]
 	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, GenericResponse<IReadOnlyCollection<Confirmation>>>>>((int) HttpStatusCode.OK)]

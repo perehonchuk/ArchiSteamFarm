@@ -216,6 +216,61 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		return new SemaphoreLock(TradingSemaphore);
 	}
 
+	private static byte GetConfirmationPriority(Confirmation confirmation) {
+		// Priority levels: lower numbers = higher priority
+		// Account security confirmations have highest priority
+		if (confirmation.ConfirmationType == Confirmation.EConfirmationType.AccountSecurity) {
+			return 1;
+		}
+
+		// Phone number changes and family operations next
+		if ((confirmation.ConfirmationType == Confirmation.EConfirmationType.PhoneNumberChange) || (confirmation.ConfirmationType == Confirmation.EConfirmationType.FamilyJoin)) {
+			return 2;
+		}
+
+		// Trade confirmations before market transactions
+		if (confirmation.ConfirmationType == Confirmation.EConfirmationType.Trade) {
+			return 3;
+		}
+
+		// Market transactions
+		if (confirmation.ConfirmationType == Confirmation.EConfirmationType.Market) {
+			return 4;
+		}
+
+		// Account recovery and API key registration
+		if ((confirmation.ConfirmationType == Confirmation.EConfirmationType.AccountRecovery) || (confirmation.ConfirmationType == Confirmation.EConfirmationType.ApiKeyRegistration)) {
+			return 5;
+		}
+
+		// Generic and unknown types last
+		return 6;
+	}
+
+	private List<Confirmation> PrioritizeConfirmations(IEnumerable<Confirmation> confirmations, IReadOnlyCollection<ulong>? requestedCreatorIDs = null) {
+		if (confirmations == null) {
+			throw new ArgumentNullException(nameof(confirmations));
+		}
+
+		// Create list with priority assignments
+		List<(Confirmation Confirmation, byte Priority, bool IsRequested)> prioritizedList = confirmations.Select(
+			confirmation => {
+				byte priority = GetConfirmationPriority(confirmation);
+				bool isRequested = (requestedCreatorIDs != null) && requestedCreatorIDs.Contains(confirmation.CreatorID);
+
+				// Requested confirmations get even higher priority (subtract 10 from priority value)
+				if (isRequested) {
+					priority = priority > 10 ? (byte) (priority - 10) : (byte) 0;
+				}
+
+				return (confirmation, priority, isRequested);
+			}
+		).ToList();
+
+		// Sort by priority (ascending), then by CreatorID for deterministic ordering
+		return prioritizedList.OrderBy(static x => x.Priority).ThenBy(static x => x.Confirmation.CreatorID).Select(static x => x.Confirmation).ToList();
+	}
+
 	[PublicAPI]
 	public async Task<(bool Success, IReadOnlyCollection<Confirmation>? HandledConfirmations, string Message)> HandleTwoFactorAuthenticationConfirmations(bool accept, Confirmation.EConfirmationType? acceptedType = null, IReadOnlyCollection<ulong>? acceptedCreatorIDs = null, bool waitIfNeeded = false) {
 		if (Bot.BotDatabase.MobileAuthenticator == null) {
@@ -257,14 +312,25 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 				}
 			}
 
-			if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(remainingConfirmations, accept).ConfigureAwait(false)) {
-				return (false, handledConfirmations?.Values, Strings.WarningFailed);
+			// Sort confirmations by priority before processing
+			List<Confirmation> prioritizedConfirmations = PrioritizeConfirmations(remainingConfirmations, acceptedCreatorIDs);
+
+			// Process confirmations in batches by priority groups
+			foreach (Confirmation confirmation in prioritizedConfirmations) {
+				HashSet<Confirmation> singleConfirmation = [confirmation];
+
+				if (!await Bot.BotDatabase.MobileAuthenticator.HandleConfirmations(singleConfirmation, accept).ConfigureAwait(false)) {
+					// Continue processing other confirmations even if one fails
+					continue;
+				}
+
+				handledConfirmations ??= new Dictionary<ulong, Confirmation>();
+				handledConfirmations[confirmation.CreatorID] = confirmation;
 			}
 
-			handledConfirmations ??= new Dictionary<ulong, Confirmation>();
-
-			foreach (Confirmation confirmation in remainingConfirmations) {
-				handledConfirmations[confirmation.CreatorID] = confirmation;
+			if (handledConfirmations == null) {
+				// All confirmations failed to process
+				return (false, null, Strings.WarningFailed);
 			}
 
 			// We've accepted *something*, if caller didn't specify the IDs, that's enough for us

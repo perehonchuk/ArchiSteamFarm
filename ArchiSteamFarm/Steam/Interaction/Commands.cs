@@ -607,6 +607,7 @@ public sealed class Commands {
 			return FormatBotResponse(Strings.BotNoASFAuthenticator);
 		}
 
+		// Confirmations are now processed in priority order: AccountSecurity > PhoneNumberChange/FamilyJoin > Trade > Market > AccountRecovery/ApiKeyRegistration > Generic/Unknown
 		(bool success, _, string message) = await Bot.Actions.HandleTwoFactorAuthenticationConfirmations(confirm).ConfigureAwait(false);
 
 		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
