@@ -21,21 +21,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
-using ArchiSteamFarm.Plugins.Interfaces;
+using JetBrains.Annotations;
 
-namespace ArchiSteamFarm.Plugins;
+namespace ArchiSteamFarm.Plugins.Interfaces;
 
-internal abstract class OfficialPlugin : IPlugin, IPluginLoadOrder {
-	public abstract string Name { get; }
-	public abstract Version Version { get; }
-	public abstract Task OnLoaded();
+/// <summary>
+///     Implementing this interface allows your plugin to declare its loading priority and dependencies on other plugins.
+///     ASF will ensure plugins are loaded in the correct order based on their dependencies and priority levels.
+/// </summary>
+[PublicAPI]
+public interface IPluginLoadOrder {
+	/// <summary>
+	///     Loading priority for this plugin. Lower values load first, higher values load later.
+	///     Default priority is 100. System/core plugins should use 0-50, normal plugins 51-150, and addon plugins 151-255.
+	/// </summary>
+	/// <returns>Priority value between 0 and 255.</returns>
+	public byte LoadPriority => 100;
 
-	// Official plugins load with high priority (early in the loading sequence)
-	public byte LoadPriority => 50;
+	/// <summary>
+	///     Names of other plugins that this plugin depends on. These plugins will be loaded before this plugin.
+	///     Dependencies are resolved recursively. If a dependency cannot be found or a circular dependency is detected,
+	///     the plugin will fail to load.
+	/// </summary>
+	/// <returns>Collection of plugin names this plugin depends on, or null/empty if no dependencies.</returns>
 	public IReadOnlyCollection<string>? PluginDependencies => null;
-
-	internal bool HasSameVersion() => Version == SharedInfo.Version;
 }

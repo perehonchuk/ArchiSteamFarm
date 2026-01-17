@@ -51,6 +51,10 @@ internal sealed class ItemsMatcherPlugin : OfficialPlugin, IBot, IBotCommand2, I
 	[JsonInclude]
 	public override Version Version => typeof(ItemsMatcherPlugin).Assembly.GetName().Version ?? throw new InvalidOperationException(nameof(Version));
 
+	// ItemsMatcher loads with slightly lower priority than MobileAuthenticator to ensure 2FA is available
+	public new byte LoadPriority => 60;
+	public new IReadOnlyCollection<string>? PluginDependencies => new[] { "MobileAuthenticatorPlugin" };
+
 	public async Task<string?> OnBotCommand(Bot bot, EAccess access, string message, string[] args, ulong steamID = 0) {
 		ArgumentNullException.ThrowIfNull(bot);
 

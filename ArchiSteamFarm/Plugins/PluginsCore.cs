@@ -235,9 +235,23 @@ public static class PluginsCore {
 			return true;
 		}
 
+		// Sort plugins by dependency order and priority
+		List<IPlugin> sortedPlugins;
+
+		try {
+			sortedPlugins = SortPluginsByLoadOrder(activePlugins);
+		} catch (Exception e) {
+			ASF.ArchiLogger.LogGenericError(Strings.FormatWarningFailedWithError("Plugin dependency resolution"));
+			ASF.ArchiLogger.LogGenericException(e);
+
+			await Task.Delay(SharedInfo.InformationDelay).ConfigureAwait(false);
+
+			return false;
+		}
+
 		HashSet<IPlugin> invalidPlugins = [];
 
-		foreach (IPlugin plugin in activePlugins) {
+		foreach (IPlugin plugin in sortedPlugins) {
 			try {
 				ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoading(plugin.Name, plugin.Version));
 
@@ -821,6 +835,79 @@ public static class PluginsCore {
 		}
 
 		return assemblies;
+	}
+
+	private static List<IPlugin> SortPluginsByLoadOrder(HashSet<IPlugin> plugins) {
+		if ((plugins == null) || (plugins.Count == 0)) {
+			throw new ArgumentNullException(nameof(plugins));
+		}
+
+		// Create a dictionary for quick lookup by plugin name
+		Dictionary<string, IPlugin> pluginsByName = plugins.ToDictionary(p => p.Name, p => p);
+
+		// Track visited plugins to detect circular dependencies
+		HashSet<string> visited = [];
+		HashSet<string> recursionStack = [];
+		List<IPlugin> sortedPlugins = [];
+
+		// Topological sort using DFS
+		foreach (IPlugin plugin in plugins) {
+			if (!visited.Contains(plugin.Name)) {
+				TopologicalSortVisit(plugin, pluginsByName, visited, recursionStack, sortedPlugins);
+			}
+		}
+
+		return sortedPlugins;
+	}
+
+	private static void TopologicalSortVisit(IPlugin plugin, Dictionary<string, IPlugin> pluginsByName, HashSet<string> visited, HashSet<string> recursionStack, List<IPlugin> sortedPlugins) {
+		ArgumentNullException.ThrowIfNull(plugin);
+
+		if (recursionStack.Contains(plugin.Name)) {
+			throw new InvalidOperationException($"Circular dependency detected involving plugin: {plugin.Name}");
+		}
+
+		if (visited.Contains(plugin.Name)) {
+			return;
+		}
+
+		recursionStack.Add(plugin.Name);
+
+		// Get dependencies and priority
+		byte priority = 100; // Default priority
+		IReadOnlyCollection<string>? dependencies = null;
+
+		if (plugin is IPluginLoadOrder pluginLoadOrder) {
+			priority = pluginLoadOrder.LoadPriority;
+			dependencies = pluginLoadOrder.PluginDependencies;
+		}
+
+		// Visit dependencies first
+		if (dependencies?.Count > 0) {
+			// Sort dependencies by their priority to ensure deterministic ordering
+			List<IPlugin> dependencyPlugins = [];
+
+			foreach (string dependencyName in dependencies) {
+				if (!pluginsByName.TryGetValue(dependencyName, out IPlugin? dependencyPlugin)) {
+					throw new InvalidOperationException($"Plugin '{plugin.Name}' depends on '{dependencyName}', but it could not be found.");
+				}
+
+				dependencyPlugins.Add(dependencyPlugin);
+			}
+
+			// Sort dependencies by priority (lower priority loads first)
+			dependencyPlugins = [.. dependencyPlugins.OrderBy(p => p is IPluginLoadOrder lo ? lo.LoadPriority : (byte) 100)];
+
+			foreach (IPlugin dependency in dependencyPlugins) {
+				TopologicalSortVisit(dependency, pluginsByName, visited, recursionStack, sortedPlugins);
+			}
+		}
+
+		recursionStack.Remove(plugin.Name);
+		visited.Add(plugin.Name);
+		sortedPlugins.Add(plugin);
+
+		ASF.ArchiLogger.LogGenericDebug($"Plugin '{plugin.Name}' scheduled to load with priority {priority}");
 	}
 
 	[UnconditionalSuppressMessage("AssemblyLoadTrimming", "IL3000", Justification = "We don't care about trimmed assemblies, as we need it to work only with the known (used) ones")]
