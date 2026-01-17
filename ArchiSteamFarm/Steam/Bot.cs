@@ -301,6 +301,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private EResult LastLogOnResult;
 	private DateTime LastLogonSessionReplaced;
 	private bool LibraryLocked;
+	private Timer? LibraryLockGracePeriodTimer;
 	private byte LoginFailures;
 	private ulong MasterChatGroupID;
 	private Timer? PlayingWasBlockedTimer;
@@ -2564,6 +2565,19 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await RegisterBot(BotName).ConfigureAwait(false);
 	}
 
+	private void InitLibraryLockGracePeriodTimer(TimeSpan delay) {
+		if (LibraryLockGracePeriodTimer != null) {
+			return;
+		}
+
+		LibraryLockGracePeriodTimer = new Timer(
+			OnLibraryLockGracePeriodExpired,
+			null,
+			delay, // Delay
+			Timeout.InfiniteTimeSpan // Period
+		);
+	}
+
 	private void InitPlayingWasBlockedTimer() {
 		if (PlayingWasBlockedTimer != null) {
 			return;
@@ -2873,6 +2887,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		HeartBeatFailures = 0;
 		StopConnectionFailureTimer();
+		StopLibraryLockGracePeriodTimer();
 		StopPlayingWasBlockedTimer();
 		StopRefreshTokensTimer();
 
@@ -3512,6 +3527,20 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await RefreshWebSession().ConfigureAwait(false);
 	}
 
+	private async void OnLibraryLockGracePeriodExpired(object? state = null) {
+		StopLibraryLockGracePeriodTimer();
+
+		if (LibraryLocked) {
+			// Already locked, no action needed
+			return;
+		}
+
+		ArchiLogger.LogGenericInfo("Family sharing grace period expired, pausing farming");
+		LibraryLocked = true;
+
+		await CheckOccupationStatus().ConfigureAwait(false);
+	}
+
 	private async void OnSendItemsTimer(object? state = null) => await Actions.SendInventory(filterFunction: item => BotConfig.LootableTypes.Contains(item.Type)).ConfigureAwait(false);
 
 	private async void OnSharedLibraryLockStatus(SharedLibraryLockStatusCallback callback) {
@@ -3523,9 +3552,22 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				return;
 			}
 
+			// Library unlocked - cancel grace period timer if active
+			StopLibraryLockGracePeriodTimer();
 			LibraryLocked = false;
 		} else {
 			if ((callback.LibraryLockedBySteamID == 0) || (callback.LibraryLockedBySteamID == SteamID)) {
+				return;
+			}
+
+			// Library locked - start grace period timer if configured
+			byte gracePeriod = ASF.GlobalConfig?.FamilySharingGracePeriod ?? GlobalConfig.DefaultFamilySharingGracePeriod;
+
+			if (gracePeriod > 0) {
+				// Wait for grace period before marking as locked
+				ArchiLogger.LogGenericInfo($"Family sharing lock detected, waiting {gracePeriod} seconds before pausing farming...");
+				InitLibraryLockGracePeriodTimer(TimeSpan.FromSeconds(gracePeriod));
+
 				return;
 			}
 
@@ -4033,6 +4075,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		} finally {
 			ConnectionSemaphore.Release();
 		}
+	}
+
+	private void StopLibraryLockGracePeriodTimer() {
+		if (LibraryLockGracePeriodTimer == null) {
+			return;
+		}
+
+		LibraryLockGracePeriodTimer.Dispose();
+		LibraryLockGracePeriodTimer = null;
 	}
 
 	private void StopPlayingWasBlockedTimer() {

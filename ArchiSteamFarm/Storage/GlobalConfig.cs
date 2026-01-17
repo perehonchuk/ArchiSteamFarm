@@ -70,6 +70,9 @@ public sealed class GlobalConfig {
 	public const byte DefaultFarmingDelay = 15;
 
 	[PublicAPI]
+	public const byte DefaultFamilySharingGracePeriod = 10;
+
+	[PublicAPI]
 	public const bool DefaultFilterBadBots = true;
 
 	[PublicAPI]
@@ -223,6 +226,10 @@ public sealed class GlobalConfig {
 	[JsonInclude]
 	[Range(1, byte.MaxValue)]
 	public byte FarmingDelay { get; init; } = DefaultFarmingDelay;
+
+	[JsonInclude]
+	[Range(byte.MinValue, byte.MaxValue)]
+	public byte FamilySharingGracePeriod { get; init; } = DefaultFamilySharingGracePeriod;
 
 	[JsonInclude]
 	public bool FilterBadBots { get; init; } = DefaultFilterBadBots;
