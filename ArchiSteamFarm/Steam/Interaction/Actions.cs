@@ -465,17 +465,43 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			await Bot.Trading.AcknowledgeTradeRestrictions().ConfigureAwait(false);
 		}
 
-		(bool success, _, HashSet<ulong>? mobileTradeOfferIDs) = await Bot.ArchiWebHandler.SendTradeOffer(targetSteamID, items, token: tradeToken, customMessage: customMessage, itemsPerTrade: itemsPerTrade).ConfigureAwait(false);
+		// Group items by AppID to send game-specific trade offers
+		// This improves organization and allows recipients to manage trades by game
+		Dictionary<uint, List<Asset>> groupedItems = [];
 
-		if ((mobileTradeOfferIDs?.Count > 0) && Bot.HasMobileAuthenticator) {
-			(bool twoFactorSuccess, _, _) = await HandleTwoFactorAuthenticationConfirmations(true, Confirmation.EConfirmationType.Trade, mobileTradeOfferIDs, true).ConfigureAwait(false);
+		foreach (Asset item in items) {
+			if (!groupedItems.ContainsKey(item.AppID)) {
+				groupedItems[item.AppID] = [];
+			}
+
+			groupedItems[item.AppID].Add(item);
+		}
+
+		// Process each game group as separate trade offers
+		HashSet<ulong> allMobileTradeOfferIDs = [];
+		bool overallSuccess = true;
+
+		foreach ((uint appID, List<Asset> gameItems) in groupedItems.OrderBy(static kvp => kvp.Key)) {
+			(bool success, _, HashSet<ulong>? mobileTradeOfferIDs) = await Bot.ArchiWebHandler.SendTradeOffer(targetSteamID, gameItems, token: tradeToken, customMessage: customMessage, itemsPerTrade: itemsPerTrade).ConfigureAwait(false);
+
+			if (!success) {
+				overallSuccess = false;
+			}
+
+			if ((mobileTradeOfferIDs != null) && (mobileTradeOfferIDs.Count > 0)) {
+				allMobileTradeOfferIDs.UnionWith(mobileTradeOfferIDs);
+			}
+		}
+
+		if ((allMobileTradeOfferIDs.Count > 0) && Bot.HasMobileAuthenticator) {
+			(bool twoFactorSuccess, _, _) = await HandleTwoFactorAuthenticationConfirmations(true, Confirmation.EConfirmationType.Trade, allMobileTradeOfferIDs, true).ConfigureAwait(false);
 
 			if (!twoFactorSuccess) {
 				return (false, Strings.BotLootingFailed);
 			}
 		}
 
-		return success ? (true, Strings.BotLootingSuccess) : (false, Strings.BotLootingFailed);
+		return overallSuccess ? (true, Strings.BotLootingSuccess) : (false, Strings.BotLootingFailed);
 	}
 
 	[PublicAPI]
