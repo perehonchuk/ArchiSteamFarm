@@ -1799,6 +1799,7 @@ public sealed class Commands {
 			return FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(Bot.BotConfig.LootableTypes)));
 		}
 
+		// Items are now sent in separate trade offers grouped by game (AppID) for better organization
 		(bool success, string message) = await Bot.Actions.SendInventory(filterFunction: item => Bot.BotConfig.LootableTypes.Contains(item.Type)).ConfigureAwait(false);
 
 		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
@@ -3489,6 +3490,7 @@ public sealed class Commands {
 			return FormatBotResponse(Strings.BotSendingTradeToYourself);
 		}
 
+		// Items are now sent in separate trade offers grouped by game (AppID) for better organization
 		(bool success, string message) = await Bot.Actions.SendInventory(targetSteamID: targetBot.SteamID, filterFunction: item => Bot.BotConfig.TransferableTypes.Contains(item.Type)).ConfigureAwait(false);
 
 		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
