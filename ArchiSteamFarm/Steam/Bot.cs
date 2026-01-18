@@ -2632,6 +2632,54 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		return steamID == BotConfig.SteamMasterClanID;
 	}
 
+	private byte CalculateFriendRequestPriority(ulong steamID) {
+		if (steamID == 0) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		SteamID steamIdentifier = new(steamID);
+
+		// Priority scale: lower number = higher priority (processed first)
+		// Priority 1: Master clan invites (highest priority)
+		if (steamIdentifier.IsClanAccount && IsMasterClanID(steamID)) {
+			return 1;
+		}
+
+		// Priority 2: Users with FamilySharing or higher access
+		if (GetAccess(steamID) >= EAccess.FamilySharing) {
+			return 2;
+		}
+
+		// Priority 3: Other clan invites
+		if (steamIdentifier.IsClanAccount) {
+			return 3;
+		}
+
+		// Priority 4: Individual Steam accounts based on account type
+		// Prioritize older/more established accounts
+		uint accountID = steamIdentifier.AccountID;
+
+		// Lower account IDs = older accounts = higher priority
+		// Divide into priority buckets based on account age approximation
+		if (accountID < 100000000) {
+			// Very old accounts (early Steam users)
+			return 4;
+		}
+
+		if (accountID < 200000000) {
+			// Old accounts
+			return 5;
+		}
+
+		if (accountID < 500000000) {
+			// Medium-age accounts
+			return 6;
+		}
+
+		// Newer accounts (lowest priority)
+		return 7;
+	}
+
 	private static bool IsRefundable(EPaymentMethod paymentMethod) {
 		if (paymentMethod == EPaymentMethod.None) {
 			throw new ArgumentOutOfRangeException(nameof(paymentMethod));
@@ -2978,13 +3026,30 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		ArgumentNullException.ThrowIfNull(callback);
 		ArgumentNullException.ThrowIfNull(callback.FriendList);
 
+		// Track timestamps for new friend requests
+		DateTime now = DateTime.UtcNow;
+
 		foreach (SteamFriends.FriendsListCallback.Friend friend in callback.FriendList.Where(static friend => friend.Relationship == EFriendRelationship.RequestRecipient)) {
+			if (!BotDatabase.FriendRequestReceivedTimestamps.ContainsKey(friend.SteamID)) {
+				BotDatabase.FriendRequestReceivedTimestamps[friend.SteamID] = now;
+			}
+		}
+
+		// Sort friend requests by priority before processing
+		List<SteamFriends.FriendsListCallback.Friend> friendRequests = callback.FriendList
+			.Where(static friend => friend.Relationship == EFriendRelationship.RequestRecipient)
+			.OrderBy(friend => CalculateFriendRequestPriority(friend.SteamID))
+			.ToList();
+
+		foreach (SteamFriends.FriendsListCallback.Friend friend in friendRequests) {
 			switch (friend.SteamID.AccountType) {
 				case EAccountType.Clan when IsMasterClanID(friend.SteamID):
 					ArchiLogger.LogInvite(friend.SteamID, true);
 
 					ArchiHandler.AcknowledgeClanInvite(friend.SteamID, true);
 					await JoinMasterChatGroupID().ConfigureAwait(false);
+
+					BotDatabase.FriendRequestReceivedTimestamps.TryRemove(friend.SteamID, out _);
 
 					break;
 				case EAccountType.Clan:
@@ -2996,6 +3061,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 						ArchiHandler.AcknowledgeClanInvite(friend.SteamID, true);
 						await JoinMasterChatGroupID().ConfigureAwait(false);
 
+						BotDatabase.FriendRequestReceivedTimestamps.TryRemove(friend.SteamID, out _);
+
 						break;
 					}
 
@@ -3003,6 +3070,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 						ArchiLogger.LogInvite(friend.SteamID, false);
 
 						ArchiHandler.AcknowledgeClanInvite(friend.SteamID, false);
+
+						BotDatabase.FriendRequestReceivedTimestamps.TryRemove(friend.SteamID, out _);
 
 						break;
 					}
@@ -3018,6 +3087,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 							ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiHandler.AddFriend)));
 						}
 
+						BotDatabase.FriendRequestReceivedTimestamps.TryRemove(friend.SteamID, out _);
+
 						break;
 					}
 
@@ -3030,6 +3101,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 							ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiHandler.AddFriend)));
 						}
 
+						BotDatabase.FriendRequestReceivedTimestamps.TryRemove(friend.SteamID, out _);
+
 						break;
 					}
 
@@ -3039,6 +3112,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 						if (!await ArchiHandler.RemoveFriend(friend.SteamID).ConfigureAwait(false)) {
 							ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiHandler.RemoveFriend)));
 						}
+
+						BotDatabase.FriendRequestReceivedTimestamps.TryRemove(friend.SteamID, out _);
 
 						break;
 					}

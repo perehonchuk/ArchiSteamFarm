@@ -192,6 +192,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	internal ObservableConcurrentDictionary<ulong, DateTime> FriendRequestReceivedTimestamps { get; private init; } = new();
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	private OrderedDictionary<string, string> GamesToRedeemInBackground { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
 	private BotDatabase(string filePath) : this() {
@@ -207,6 +212,7 @@ public sealed class BotDatabase : GenericDatabase {
 		FarmingPriorityQueueAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyIgnoredAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyPrioritizedAppIDs.OnModified += OnObjectModified;
+		FriendRequestReceivedTimestamps.OnModified += OnObjectModified;
 		MatchActivelyBlacklistAppIDs.OnModified += OnObjectModified;
 		TradingBlacklistSteamIDs.OnModified += OnObjectModified;
 	}
