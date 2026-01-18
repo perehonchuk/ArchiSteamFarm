@@ -299,7 +299,9 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			return (false, Strings.BotAutomaticIdlingPausedAlready);
 		}
 
-		await Bot.CardsFarmer.Pause(permanent).ConfigureAwait(false);
+		string reason = permanent ? "User requested permanent pause" : (resumeInSeconds > 0 ? $"User requested timed pause ({resumeInSeconds}s)" : "User requested temporary pause");
+
+		await Bot.CardsFarmer.Pause(permanent, reason).ConfigureAwait(false);
 
 		if (!permanent && (Bot.BotConfig.GamesPlayedWhileIdle.Count > 0)) {
 			// We want to let family sharing users access our library, and in this case we must also stop GamesPlayedWhileIdle
@@ -335,7 +337,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		}
 
 		if (!Bot.CardsFarmer.Paused) {
-			await Bot.CardsFarmer.Pause(true).ConfigureAwait(false);
+			await Bot.CardsFarmer.Pause(true, "Manual play command invoked").ConfigureAwait(false);
 		}
 
 		await Bot.ArchiHandler.PlayGames(gameIDs, gameName).ConfigureAwait(false);

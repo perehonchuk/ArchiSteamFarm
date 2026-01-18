@@ -150,6 +150,14 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	[Required]
 	public bool Paused { get; private set; }
 
+	[JsonInclude]
+	[PublicAPI]
+	public string? PauseReason { get; private set; }
+
+	[JsonInclude]
+	[PublicAPI]
+	public DateTime? PausedSince { get; private set; }
+
 	private TaskCompletionSource<bool>? FarmingResetEvent;
 	private bool ParsingScheduled;
 	private bool PermanentlyPaused;
@@ -267,12 +275,14 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	internal async Task Pause(bool permanent) {
+	internal async Task Pause(bool permanent, string? reason = null) {
 		if (permanent) {
 			PermanentlyPaused = true;
 		}
 
 		Paused = true;
+		PauseReason = reason ?? (permanent ? "Manually paused" : "Temporarily paused");
+		PausedSince = DateTime.UtcNow;
 
 		if (!NowFarming) {
 			return;
@@ -293,6 +303,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Paused = false;
+		PauseReason = null;
+		PausedSince = null;
 
 		if (NowFarming) {
 			return true;
@@ -310,6 +322,14 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	internal void SetInitialState(bool paused) {
 		PermanentlyPaused = Paused = paused;
 		ShouldResumeFarming = ShouldSkipNewGamesIfPossible = false;
+
+		if (paused) {
+			PauseReason = "Restored from previous session";
+			PausedSince = DateTime.UtcNow;
+		} else {
+			PauseReason = null;
+			PausedSince = null;
+		}
 	}
 
 	internal async Task StartFarming() {
