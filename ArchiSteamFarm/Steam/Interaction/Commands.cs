@@ -2288,6 +2288,7 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
+		// GetBots supports special bot group selectors including @paused for already-paused bots
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
@@ -3161,6 +3162,7 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
+		// GetBots supports special bot group selectors including @paused to target only paused bots
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
@@ -3195,6 +3197,7 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
+		// GetBots supports special bot group selectors including @stopped for stopped bots and @enabled for running bots
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
@@ -3314,6 +3317,7 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
+		// GetBots supports special bot group selectors including @enabled for running bots and @stopped for already-stopped bots
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
