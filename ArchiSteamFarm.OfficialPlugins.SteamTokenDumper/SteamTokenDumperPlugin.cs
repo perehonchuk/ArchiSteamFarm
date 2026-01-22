@@ -62,6 +62,8 @@ internal sealed class SteamTokenDumperPlugin : OfficialPlugin, IASF, IBot, IBotC
 
 	private static GlobalCache? GlobalCache;
 	private static DateTimeOffset LastUploadAt = DateTimeOffset.MinValue;
+	private static byte ConsecutiveEmptySubmissions;
+	private static bool LastSubmissionHadData;
 
 	[JsonInclude]
 	public override string Name => nameof(SteamTokenDumperPlugin);
@@ -602,6 +604,21 @@ internal sealed class SteamTokenDumperPlugin : OfficialPlugin, IASF, IBot, IBotC
 			if ((appTokens.Count == 0) && (packageTokens.Count == 0) && (depotKeys.Count == 0)) {
 				ASF.ArchiLogger.LogGenericInfo(Strings.SubmissionNoNewData);
 
+				LastSubmissionHadData = false;
+				ConsecutiveEmptySubmissions++;
+
+				// Adjust submission interval based on consecutive empty submissions
+				if (Config is { Enabled: true } && (ConsecutiveEmptySubmissions >= SharedInfo.ConsecutiveEmptySubmissionsForIdle)) {
+					TimeSpan idleInterval = TimeSpan.FromHours(SharedInfo.HoursBetweenUploadsWhenIdle);
+
+					// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
+					lock (SubmissionSemaphore) {
+						SubmissionTimer.Change(idleInterval, idleInterval);
+					}
+
+					ASF.ArchiLogger.LogGenericInfo($"Switching to idle submission interval: {idleInterval.TotalHours} hours (no new data after {ConsecutiveEmptySubmissions} consecutive submissions)");
+				}
+
 				return;
 			}
 
@@ -680,6 +697,45 @@ internal sealed class SteamTokenDumperPlugin : OfficialPlugin, IASF, IBot, IBotC
 			ASF.ArchiLogger.LogGenericInfo(Strings.FormatSubmissionSuccessful(response.Content.Data.NewApps.Count, response.Content.Data.VerifiedApps.Count, response.Content.Data.NewPackages.Count, response.Content.Data.VerifiedPackages.Count, response.Content.Data.NewDepots.Count, response.Content.Data.VerifiedDepots.Count));
 
 			GlobalCache.UpdateSubmittedData(appTokens, packageTokens, depotKeys);
+
+			// Track submission activity for adaptive timing
+			bool hasNewData = (response.Content.Data.NewApps.Count > 0) || (response.Content.Data.NewPackages.Count > 0) || (response.Content.Data.NewDepots.Count > 0);
+
+			if (hasNewData && !LastSubmissionHadData) {
+				// Transitioning from idle to active - reset counter and switch to active interval
+				ConsecutiveEmptySubmissions = 0;
+				LastSubmissionHadData = true;
+
+				if (Config is { Enabled: true }) {
+					TimeSpan activeInterval = TimeSpan.FromHours(SharedInfo.HoursBetweenUploadsWhenActive);
+
+					// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
+					lock (SubmissionSemaphore) {
+						SubmissionTimer.Change(activeInterval, activeInterval);
+					}
+
+					ASF.ArchiLogger.LogGenericInfo($"Switching to active submission interval: {activeInterval.TotalHours} hours (new data discovered)");
+				}
+			} else if (hasNewData) {
+				// Continue with active interval
+				ConsecutiveEmptySubmissions = 0;
+				LastSubmissionHadData = true;
+			} else if (!hasNewData && LastSubmissionHadData) {
+				// First empty submission after having data - switch back to standard interval
+				ConsecutiveEmptySubmissions = 1;
+				LastSubmissionHadData = false;
+
+				if (Config is { Enabled: true }) {
+					TimeSpan standardInterval = TimeSpan.FromHours(SharedInfo.HoursBetweenUploads);
+
+					// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
+					lock (SubmissionSemaphore) {
+						SubmissionTimer.Change(standardInterval, standardInterval);
+					}
+
+					ASF.ArchiLogger.LogGenericInfo($"Switching to standard submission interval: {standardInterval.TotalHours} hours");
+				}
+			}
 
 			if (!response.Content.Data.NewApps.IsEmpty) {
 				ASF.ArchiLogger.LogGenericInfo(Strings.FormatSubmissionSuccessfulNewApps(string.Join(", ", response.Content.Data.NewApps)));
