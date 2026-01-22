@@ -50,9 +50,19 @@ namespace ArchiSteamFarm.Steam.Interaction;
 public sealed class Actions : IAsyncDisposable, IDisposable {
 	private static readonly SemaphoreSlim GiftCardsSemaphore = new(1, 1);
 
+	internal sealed class ScheduledPause {
+		internal DateTime ScheduledTime { get; init; }
+		internal bool Permanent { get; init; }
+		internal ushort DurationSeconds { get; init; }
+		internal Timer? Timer { get; set; }
+		internal Guid Id { get; init; } = Guid.NewGuid();
+	}
+
 	private readonly Bot Bot;
 	private readonly ConcurrentHashSet<ulong> HandledGifts = [];
 	private readonly SemaphoreSlim TradingSemaphore = new(1, 1);
+	private readonly List<ScheduledPause> ScheduledPauses = [];
+	private readonly object ScheduledPausesLock = new();
 
 	private Timer? CardsFarmerResumeTimer;
 	private bool ProcessingGiftsScheduled;
@@ -70,6 +80,14 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		// Those are objects that might be null and the check should be in-place
 		CardsFarmerResumeTimer?.Dispose();
+
+		lock (ScheduledPausesLock) {
+			foreach (ScheduledPause scheduledPause in ScheduledPauses) {
+				scheduledPause.Timer?.Dispose();
+			}
+
+			ScheduledPauses.Clear();
+		}
 	}
 
 	public async ValueTask DisposeAsync() {
@@ -79,6 +97,16 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		// Those are objects that might be null and the check should be in-place
 		if (CardsFarmerResumeTimer != null) {
 			await CardsFarmerResumeTimer.DisposeAsync().ConfigureAwait(false);
+		}
+
+		lock (ScheduledPausesLock) {
+			foreach (ScheduledPause scheduledPause in ScheduledPauses) {
+				if (scheduledPause.Timer != null) {
+					scheduledPause.Timer.Dispose();
+				}
+			}
+
+			ScheduledPauses.Clear();
 		}
 	}
 
@@ -324,6 +352,94 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		}
 
 		return (true, Strings.BotAutomaticIdlingNowPaused);
+	}
+
+	[PublicAPI]
+	public (bool Success, string Message) SchedulePause(DateTime scheduledTime, bool permanent, ushort durationSeconds = 0) {
+		if (scheduledTime <= DateTime.Now) {
+			return (false, "Scheduled time must be in the future");
+		}
+
+		ScheduledPause newSchedule = new() {
+			ScheduledTime = scheduledTime,
+			Permanent = permanent,
+			DurationSeconds = durationSeconds
+		};
+
+		TimeSpan delay = scheduledTime - DateTime.Now;
+
+		newSchedule.Timer = new Timer(
+			async _ => {
+				await Pause(newSchedule.Permanent, newSchedule.DurationSeconds).ConfigureAwait(false);
+
+				lock (ScheduledPausesLock) {
+					ScheduledPauses.RemoveAll(sp => sp.Id == newSchedule.Id);
+				}
+			},
+			null,
+			delay,
+			Timeout.InfiniteTimeSpan
+		);
+
+		lock (ScheduledPausesLock) {
+			ScheduledPauses.Add(newSchedule);
+		}
+
+		return (true, $"Pause scheduled for {scheduledTime:yyyy-MM-dd HH:mm:ss} (ID: {newSchedule.Id})");
+	}
+
+	[PublicAPI]
+	public (bool Success, string Message) ListScheduledPauses() {
+		lock (ScheduledPausesLock) {
+			if (ScheduledPauses.Count == 0) {
+				return (true, "No scheduled pauses");
+			}
+
+			StringBuilder result = new();
+			result.AppendLine($"Scheduled pauses ({ScheduledPauses.Count}):");
+
+			foreach (ScheduledPause sp in ScheduledPauses) {
+				string pauseType = sp.Permanent ? "permanent" : (sp.DurationSeconds > 0 ? $"for {sp.DurationSeconds}s" : "temporary");
+				result.AppendLine($"- {sp.ScheduledTime:yyyy-MM-dd HH:mm:ss} ({pauseType}) [ID: {sp.Id}]");
+			}
+
+			return (true, result.ToString());
+		}
+	}
+
+	[PublicAPI]
+	public (bool Success, string Message) CancelScheduledPause(Guid scheduleId) {
+		lock (ScheduledPausesLock) {
+			ScheduledPause? schedule = ScheduledPauses.FirstOrDefault(sp => sp.Id == scheduleId);
+
+			if (schedule == null) {
+				return (false, "Scheduled pause not found");
+			}
+
+			schedule.Timer?.Dispose();
+			ScheduledPauses.Remove(schedule);
+
+			return (true, "Scheduled pause cancelled");
+		}
+	}
+
+	[PublicAPI]
+	public (bool Success, string Message) CancelAllScheduledPauses() {
+		lock (ScheduledPausesLock) {
+			if (ScheduledPauses.Count == 0) {
+				return (false, "No scheduled pauses to cancel");
+			}
+
+			int count = ScheduledPauses.Count;
+
+			foreach (ScheduledPause sp in ScheduledPauses) {
+				sp.Timer?.Dispose();
+			}
+
+			ScheduledPauses.Clear();
+
+			return (true, $"Cancelled {count} scheduled pause(s)");
+		}
 	}
 
 	[PublicAPI]

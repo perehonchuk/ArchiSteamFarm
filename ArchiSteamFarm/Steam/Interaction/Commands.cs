@@ -153,6 +153,10 @@ public sealed class Commands {
 						return await ResponsePause(access, true).ConfigureAwait(false);
 					case "PAUSE~":
 						return await ResponsePause(access, false).ConfigureAwait(false);
+					case "PAUSELIST":
+						return ResponsePauseList(access);
+					case "PAUSECLEAR":
+						return ResponsePauseClear(access);
 					case "POINTS":
 						return await ResponsePointsBalance(access).ConfigureAwait(false);
 					case "RESET":
@@ -286,6 +290,16 @@ public sealed class Commands {
 						return await ResponsePause(access, args[1], true, Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 					case "PAUSE&":
 						return await ResponsePause(access, true, args[1]).ConfigureAwait(false);
+					case "PAUSEAT" when args.Length > 2:
+						return ResponsePauseAt(access, args[1], Utilities.GetArgsAsText(message, 2), steamID);
+					case "PAUSEAT":
+						return ResponsePauseAt(access, args[1]);
+					case "PAUSELIST":
+						return ResponsePauseList(access, Utilities.GetArgsAsText(args, 1, ","), steamID);
+					case "PAUSECLEAR" when args.Length > 2:
+						return ResponsePauseClear(access, args[1], Utilities.GetArgsAsText(args, 2, ","), steamID);
+					case "PAUSECLEAR":
+						return ResponsePauseClear(access, Utilities.GetArgsAsText(args, 1, ","), steamID);
 					case "PLAY" when args.Length > 2:
 						return await ResponsePlay(access, args[1], Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
 					case "PLAY":
@@ -3776,6 +3790,180 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseWalletBalance(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private string? ResponsePauseAt(EAccess access, string scheduledTimeText, string? botNames = null, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(scheduledTimeText);
+
+		if (access < EAccess.Operator) {
+			return FormatBotResponse(Strings.ErrorAccessDenied);
+		}
+
+		if (!DateTime.TryParse(scheduledTimeText, out DateTime scheduledTime)) {
+			return FormatBotResponse(Strings.FormatErrorIsInvalid(nameof(scheduledTimeText)));
+		}
+
+		if (string.IsNullOrEmpty(botNames)) {
+			(bool success, string message) = Bot.Actions.SchedulePause(scheduledTime, permanent: true);
+
+			return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+		}
+
+		return ResponsePauseAt(access, scheduledTimeText, botNames, steamID);
+	}
+
+	private static string? ResponsePauseAt(EAccess access, string scheduledTimeText, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(scheduledTimeText);
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		if (!DateTime.TryParse(scheduledTimeText, out DateTime scheduledTime)) {
+			return FormatStaticResponse(Strings.FormatErrorIsInvalid(nameof(scheduledTimeText)));
+		}
+
+		IList<string?> results = bots.Select(bot => {
+			if (GetProxyAccess(bot, access, steamID) < EAccess.Operator) {
+				return null;
+			}
+
+			(bool success, string message) = bot.Actions.SchedulePause(scheduledTime, permanent: true);
+
+			return bot.Commands.FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+		}).ToList();
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private string? ResponsePauseList(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Operator) {
+			return FormatBotResponse(Strings.ErrorAccessDenied);
+		}
+
+		(bool success, string message) = Bot.Actions.ListScheduledPauses();
+
+		return FormatBotResponse(message);
+	}
+
+	private static string? ResponsePauseList(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = bots.Select(bot => {
+			if (GetProxyAccess(bot, access, steamID) < EAccess.Operator) {
+				return null;
+			}
+
+			(bool _, string message) = bot.Actions.ListScheduledPauses();
+
+			return bot.Commands.FormatBotResponse(message);
+		}).ToList();
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private string? ResponsePauseClear(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Operator) {
+			return FormatBotResponse(Strings.ErrorAccessDenied);
+		}
+
+		(bool success, string message) = Bot.Actions.CancelAllScheduledPauses();
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static string? ResponsePauseClear(EAccess access, string botNames, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = bots.Select(bot => {
+			if (GetProxyAccess(bot, access, steamID) < EAccess.Operator) {
+				return null;
+			}
+
+			(bool success, string message) = bot.Actions.CancelAllScheduledPauses();
+
+			return bot.Commands.FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+		}).ToList();
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private static string? ResponsePauseClear(EAccess access, string botNames, string scheduleId, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(scheduleId);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		if (!Guid.TryParse(scheduleId, out Guid guid)) {
+			return FormatStaticResponse(Strings.FormatErrorIsInvalid(nameof(scheduleId)));
+		}
+
+		IList<string?> results = bots.Select(bot => {
+			if (GetProxyAccess(bot, access, steamID) < EAccess.Operator) {
+				return null;
+			}
+
+			(bool success, string message) = bot.Actions.CancelScheduledPause(guid);
+
+			return bot.Commands.FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+		}).ToList();
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 
