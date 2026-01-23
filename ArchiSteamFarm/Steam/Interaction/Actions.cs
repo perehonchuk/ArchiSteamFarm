@@ -299,6 +299,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			return (false, Strings.BotAutomaticIdlingPausedAlready);
 		}
 
+		Bot.ArchiLogger.LogGenericInfo($"Pausing farming (permanent: {permanent}, resumeInSeconds: {resumeInSeconds})");
 		await Bot.CardsFarmer.Pause(permanent).ConfigureAwait(false);
 
 		if (!permanent && (Bot.BotConfig.GamesPlayedWhileIdle.Count > 0)) {

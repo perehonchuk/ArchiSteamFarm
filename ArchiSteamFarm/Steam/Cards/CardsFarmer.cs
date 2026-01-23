@@ -51,6 +51,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	internal const byte DaysForRefund = 14; // In how many days since payment we're allowed to refund
 	internal const byte HoursForRefund = 2; // Up to how many hours we're allowed to play for refund
 
+	private const byte AutoPauseCardThreshold = 5; // Automatically pause farming when total cards remaining drops to or below this threshold
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
@@ -293,6 +294,11 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Paused = false;
+
+		// Log resume action
+		if (userAction) {
+			Bot.ArchiLogger.LogGenericInfo("Farming resumed by user action");
+		}
 
 		if (NowFarming) {
 			return true;
@@ -779,7 +785,18 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 	private async Task Farm() {
 		do {
-			Bot.ArchiLogger.LogGenericInfo(Strings.FormatGamesToIdle(GamesToFarm.Count, GamesToFarm.Sum(static game => game.CardsRemaining), TimeRemaining.ToHumanReadable()));
+			uint totalCardsRemaining = GamesToFarm.Sum(static game => game.CardsRemaining);
+			Bot.ArchiLogger.LogGenericInfo(Strings.FormatGamesToIdle(GamesToFarm.Count, totalCardsRemaining, TimeRemaining.ToHumanReadable()));
+
+			// Check if we should auto-pause due to low cards remaining
+			if (totalCardsRemaining <= AutoPauseCardThreshold) {
+				Bot.ArchiLogger.LogGenericInfo($"Automatically pausing farming - only {totalCardsRemaining} cards remaining (threshold: {AutoPauseCardThreshold})");
+				await Pause(false).ConfigureAwait(false);
+
+				NowFarming = false;
+
+				return;
+			}
 
 			// Now the algorithm used for farming depends on whether account is restricted or not
 			if (Bot.BotConfig.HoursUntilCardDrops > 0) {
