@@ -167,6 +167,8 @@ public sealed class Commands {
 						return ResponseStart(access);
 					case "STATS":
 						return ResponseStats(access);
+					case "STATUSCATEGORIES":
+						return ResponseStatusCategories(access);
 					case "STATUS":
 						return ResponseStatus(access).Response;
 					case "STOP":
@@ -3214,6 +3216,20 @@ public sealed class Commands {
 		return FormatBotResponse(Strings.FormatBotStats(memoryInMegabytes, uptime.ToHumanReadable()));
 	}
 
+	private string? ResponseStatusCategories(EAccess access) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.FamilySharing) {
+			return null;
+		}
+
+		string categories = Bot.Actions.GetBotStatusCategories();
+
+		return FormatBotResponse($"Status categories: {categories}");
+	}
+
 	private (string? Response, Bot Bot) ResponseStatus(EAccess access) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
@@ -3221,6 +3237,10 @@ public sealed class Commands {
 
 		if (access < EAccess.FamilySharing) {
 			return (null, Bot);
+		}
+
+		if (!Bot.BotConfig.Enabled) {
+			return (FormatBotResponse("Disabled in configuration"), Bot);
 		}
 
 		if (!Bot.IsConnectedAndLoggedOn) {
