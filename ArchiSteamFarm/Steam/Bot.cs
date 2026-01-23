@@ -666,6 +666,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			EFileType.Config => $"{botPath}{SharedInfo.JsonConfigExtension}",
 			EFileType.Database => $"{botPath}{SharedInfo.DatabaseExtension}",
 			EFileType.KeysToRedeem => $"{botPath}{SharedInfo.KeysExtension}",
+			EFileType.KeysToRedeemFailed => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysFailedExtension}",
 			EFileType.KeysToRedeemUnused => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysUnusedExtension}",
 			EFileType.KeysToRedeemUsed => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysUsedExtension}",
 			EFileType.MobileAuthenticator => $"{botPath}{SharedInfo.MobileAuthenticatorExtension}",
@@ -1088,6 +1089,24 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 		}
 
+		string failedKeysFilePath = GetFilePath(EFileType.KeysToRedeemFailed);
+
+		if (string.IsNullOrEmpty(failedKeysFilePath)) {
+			ASF.ArchiLogger.LogNullError(failedKeysFilePath);
+
+			return false;
+		}
+
+		if (File.Exists(failedKeysFilePath)) {
+			try {
+				File.Delete(failedKeysFilePath);
+			} catch (Exception e) {
+				ArchiLogger.LogGenericException(e);
+
+				return false;
+			}
+		}
+
 		return true;
 	}
 
@@ -1413,12 +1432,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		return result;
 	}
 
-	internal async Task<(Dictionary<string, string>? UnusedKeys, Dictionary<string, string>? UsedKeys)> GetUsedAndUnusedKeys() {
-		string[] files = [GetFilePath(EFileType.KeysToRedeemUnused), GetFilePath(EFileType.KeysToRedeemUsed)];
+	internal async Task<(Dictionary<string, string>? UnusedKeys, Dictionary<string, string>? UsedKeys, Dictionary<string, string>? FailedKeys)> GetUsedAndUnusedKeys() {
+		string[] files = [GetFilePath(EFileType.KeysToRedeemUnused), GetFilePath(EFileType.KeysToRedeemUsed), GetFilePath(EFileType.KeysToRedeemFailed)];
 
 		IList<Dictionary<string, string>?> results = await Utilities.InParallel(files.Select(GetKeysFromFile)).ConfigureAwait(false);
 
-		return (results[0], results[1]);
+		return (results[0], results[1], results[2]);
 	}
 
 	internal async Task<bool?> HasPublicInventory() {
@@ -3669,7 +3688,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				ArchiLogger.LogGenericDebug(items?.Count > 0 ? Strings.FormatBotRedeemWithItems(key, $"{result}/{purchaseResultDetail}{(!string.IsNullOrEmpty(balanceText) ? $"/{balanceText}" : "")}", string.Join(", ", items)) : Strings.FormatBotRedeem(key, $"{result}/{purchaseResultDetail}{(!string.IsNullOrEmpty(balanceText) ? $"/{balanceText}" : "")}"));
 
 				bool rateLimited = false;
-				bool redeemed = false;
+				EFileType fileType = EFileType.KeysToRedeemUnused;
 
 				switch (purchaseResultDetail) {
 					case EPurchaseResultDetail.AccountLocked:
@@ -3682,8 +3701,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 						break;
 					case EPurchaseResultDetail.BadActivationCode:
 					case EPurchaseResultDetail.DuplicateActivationCode:
+						fileType = EFileType.KeysToRedeemFailed;
+
+						break;
 					case EPurchaseResultDetail.NoDetail:
-						redeemed = true;
+						fileType = EFileType.KeysToRedeemUsed;
 
 						break;
 					case EPurchaseResultDetail.RateLimited:
@@ -3711,7 +3733,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				string logEntry = $"{name}{DefaultBackgroundKeysRedeemerSeparator}[{purchaseResultDetail}]{(items?.Count > 0 ? $"{DefaultBackgroundKeysRedeemerSeparator}{string.Join(", ", items)}" : "")}{DefaultBackgroundKeysRedeemerSeparator}{key}";
 
-				string filePath = GetFilePath(redeemed ? EFileType.KeysToRedeemUsed : EFileType.KeysToRedeemUnused);
+				string filePath = GetFilePath(fileType);
 
 				if (string.IsNullOrEmpty(filePath)) {
 					ArchiLogger.LogNullError(filePath);
@@ -4174,6 +4196,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		Config,
 		Database,
 		KeysToRedeem,
+		KeysToRedeemFailed,
 		KeysToRedeemUnused,
 		KeysToRedeemUsed,
 		MobileAuthenticator
