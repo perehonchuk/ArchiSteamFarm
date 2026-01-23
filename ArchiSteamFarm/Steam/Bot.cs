@@ -2072,6 +2072,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await PluginsCore.OnBotDestroy(this).ConfigureAwait(false);
 	}
 
+	internal async Task Disconnect() {
+		await Task.Run(() => Disconnect(false)).ConfigureAwait(false);
+	}
+
 	private void Disconnect(bool reconnect = false) {
 		StopConnectionFailureTimer();
 

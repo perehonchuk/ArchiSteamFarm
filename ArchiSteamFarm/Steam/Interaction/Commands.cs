@@ -141,6 +141,10 @@ public sealed class Commands {
 						return ResponseFarmingQueue(access);
 					case "HELP":
 						return ResponseHelp(access);
+					case "IDLE":
+						return await ResponseIdle(access, true).ConfigureAwait(false);
+					case "IDLE~":
+						return await ResponseIdle(access, false).ConfigureAwait(false);
 					case "INVENTORY":
 						return await ResponseInventory(access).ConfigureAwait(false);
 					case "LEVEL":
@@ -236,6 +240,14 @@ public sealed class Commands {
 						return await ResponseInput(access, args[1], args[2], Utilities.GetArgsAsText(message, 3), steamID).ConfigureAwait(false);
 					case "INPUT" when args.Length > 2:
 						return ResponseInput(access, args[1], args[2]);
+					case "IDLE":
+						return await ResponseIdle(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID: steamID).ConfigureAwait(false);
+					case "IDLE~":
+						return await ResponseIdle(access, Utilities.GetArgsAsText(args, 1, ","), false, steamID: steamID).ConfigureAwait(false);
+					case "IDLE&" when args.Length > 2:
+						return await ResponseIdle(access, args[1], true, Utilities.GetArgsAsText(message, 2), steamID).ConfigureAwait(false);
+					case "IDLE&":
+						return await ResponseIdle(access, true, args[1]).ConfigureAwait(false);
 					case "INVENTORY":
 						return await ResponseInventory(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "LEVEL":
@@ -2246,6 +2258,50 @@ public sealed class Commands {
 		IEnumerable<string> extraResponses = ownedGamesStats.Select(kv => FormatStaticResponse(Strings.FormatBotOwnsOverviewPerGame(kv.Value.Count, validResults.Count, $"{kv.Key}{(!string.IsNullOrEmpty(kv.Value.GameName) ? $" | {kv.Value.GameName}" : "")}")));
 
 		return string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Concat(extraResponses));
+	}
+
+	private async Task<string?> ResponseIdle(EAccess access, bool permanent, string? resumeInSecondsText = null) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.FamilySharing) {
+			return null;
+		}
+
+		if (permanent && (access < EAccess.Operator)) {
+			return FormatBotResponse(Strings.ErrorAccessDenied);
+		}
+
+		ushort resumeInSeconds = 0;
+
+		if (!string.IsNullOrEmpty(resumeInSecondsText) && (!ushort.TryParse(resumeInSecondsText, out resumeInSeconds) || (resumeInSeconds == 0))) {
+			return Strings.FormatErrorIsInvalid(nameof(resumeInSecondsText));
+		}
+
+		(bool success, string message) = await Bot.Actions.Idle(permanent, resumeInSeconds).ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
+	private static async Task<string?> ResponseIdle(EAccess access, string botNames, bool permanent, string? resumeInSecondsText = null, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseIdle(GetProxyAccess(bot, access, steamID), permanent, resumeInSecondsText))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
 	}
 
 	private async Task<string?> ResponsePause(EAccess access, bool permanent, string? resumeInSecondsText = null) {

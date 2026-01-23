@@ -294,6 +294,36 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public async Task<(bool Success, string Message)> Idle(bool permanent, ushort resumeInSeconds = 0) {
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return (false, Strings.BotNotConnected);
+		}
+
+		// Idle disconnects from Steam but keeps bot structure ready for quick reconnection
+		await Bot.CardsFarmer.Pause(permanent).ConfigureAwait(false);
+
+		await Bot.Disconnect().ConfigureAwait(false);
+
+		if (resumeInSeconds > 0) {
+			if (CardsFarmerResumeTimer == null) {
+				CardsFarmerResumeTimer = new Timer(
+					_ => {
+						Resume();
+						Utilities.InBackground(() => Bot.Start());
+					},
+					null,
+					TimeSpan.FromSeconds(resumeInSeconds), // Delay
+					Timeout.InfiniteTimeSpan // Period
+				);
+			} else {
+				CardsFarmerResumeTimer.Change(TimeSpan.FromSeconds(resumeInSeconds), Timeout.InfiniteTimeSpan);
+			}
+		}
+
+		return (true, "Bot is now idle and disconnected from Steam");
+	}
+
+	[PublicAPI]
 	public async Task<(bool Success, string Message)> Pause(bool permanent, ushort resumeInSeconds = 0) {
 		if (Bot.CardsFarmer.Paused) {
 			return (false, Strings.BotAutomaticIdlingPausedAlready);
