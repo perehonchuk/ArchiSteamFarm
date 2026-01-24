@@ -44,6 +44,9 @@ namespace ArchiSteamFarm.IPC.Controllers.Api;
 
 [Route("Api/Bot")]
 public sealed class BotController : ArchiController {
+	// Bot names can be individual bot names, comma-separated lists, ranges (bot1..bot5),
+	// regex patterns (r!^test), or predefined groups:
+	// @all/@ASF, @farming, @idle, @offline, @online, @paused, @enabled, @stopped
 	[EndpointSummary("Adds (free) licenses on given bots")]
 	[HttpPost("{botNames:required}/AddLicense")]
 	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, BotAddLicenseResponse>>>((int) HttpStatusCode.OK)]
