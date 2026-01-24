@@ -160,6 +160,24 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public static byte GetConfirmationPriority(Confirmation.EConfirmationType confirmationType) {
+		// Lower values = higher priority (processed first)
+		// Priority order ensures critical confirmations are handled before routine ones
+		return confirmationType switch {
+			Confirmation.EConfirmationType.AccountSecurity => 10,      // Highest priority - account security changes
+			Confirmation.EConfirmationType.PhoneNumberChange => 20,    // High priority - account recovery related
+			Confirmation.EConfirmationType.AccountRecovery => 30,      // High priority - account recovery
+			Confirmation.EConfirmationType.ApiKeyRegistration => 40,   // Medium-high priority - API access
+			Confirmation.EConfirmationType.FamilyJoin => 50,           // Medium priority - family features
+			Confirmation.EConfirmationType.Trade => 60,                // Medium-low priority - trading
+			Confirmation.EConfirmationType.Market => 70,               // Low priority - market listings
+			Confirmation.EConfirmationType.Generic => 80,              // Lower priority - generic confirmations
+			Confirmation.EConfirmationType.Unknown => 90,              // Lowest priority - unknown types
+			_ => 100                                                   // Fallback for new types
+		};
+	}
+
+	[PublicAPI]
 	public ulong GetFirstSteamMasterID() {
 		ulong steamMasterID = Bot.BotConfig.SteamUserPermissions.Where(kv => (kv.Key > 0) && (kv.Key != Bot.SteamID) && new SteamID(kv.Key).IsIndividualAccount && (kv.Value == BotConfig.EAccess.Master)).Select(static kv => kv.Key).OrderBy(static steamID => steamID).FirstOrDefault();
 

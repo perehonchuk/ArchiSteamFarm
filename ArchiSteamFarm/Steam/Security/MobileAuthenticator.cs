@@ -270,7 +270,21 @@ public sealed class MobileAuthenticator : IDisposable {
 			return false;
 		}
 
-		bool? result = await Bot.ArchiWebHandler.HandleConfirmations(deviceID, confirmationHash, time, confirmations, accept).ConfigureAwait(false);
+		// Sort confirmations by priority before processing
+		// Higher priority confirmations are processed first to ensure critical operations complete
+		List<Confirmation> prioritizedConfirmations = confirmations.OrderBy(GetConfirmationPriority).ToList();
+
+		// Log priority information for debugging and user awareness
+		if (prioritizedConfirmations.Count > 1) {
+			Bot.ArchiLogger.LogGenericInfo($"Processing {prioritizedConfirmations.Count} confirmations in priority order:");
+
+			foreach (Confirmation confirmation in prioritizedConfirmations) {
+				byte priority = GetConfirmationPriority(confirmation);
+				Bot.ArchiLogger.LogGenericInfo($"  Priority {priority}: {confirmation.ConfirmationType} (ID: {confirmation.ID})");
+			}
+		}
+
+		bool? result = await Bot.ArchiWebHandler.HandleConfirmations(deviceID, confirmationHash, time, prioritizedConfirmations, accept).ConfigureAwait(false);
 
 		if (!result.HasValue) {
 			// Request timed out
@@ -285,7 +299,8 @@ public sealed class MobileAuthenticator : IDisposable {
 		// Our multi request failed, this is almost always Steam issue that happens randomly
 		// In this case, we'll accept all pending confirmations one-by-one, synchronously (as Steam can't handle them in parallel)
 		// We totally ignore actual result returned by those calls, abort only if request timed out
-		foreach (Confirmation confirmation in confirmations) {
+		// Process confirmations in priority order
+		foreach (Confirmation confirmation in prioritizedConfirmations) {
 			bool? confirmationResult = await Bot.ArchiWebHandler.HandleConfirmation(deviceID, confirmationHash, time, confirmation.ID, confirmation.Nonce, accept).ConfigureAwait(false);
 
 			if (!confirmationResult.HasValue) {
@@ -379,6 +394,25 @@ public sealed class MobileAuthenticator : IDisposable {
 		}
 
 		return Convert.ToBase64String(hash);
+	}
+
+	private static byte GetConfirmationPriority(Confirmation confirmation) {
+		ArgumentNullException.ThrowIfNull(confirmation);
+
+		// Lower values = higher priority (processed first)
+		// Priority order ensures critical confirmations are handled before routine ones
+		return confirmation.ConfirmationType switch {
+			Confirmation.EConfirmationType.AccountSecurity => 10,      // Highest priority - account security changes
+			Confirmation.EConfirmationType.PhoneNumberChange => 20,    // High priority - account recovery related
+			Confirmation.EConfirmationType.AccountRecovery => 30,      // High priority - account recovery
+			Confirmation.EConfirmationType.ApiKeyRegistration => 40,   // Medium-high priority - API access
+			Confirmation.EConfirmationType.FamilyJoin => 50,           // Medium priority - family features
+			Confirmation.EConfirmationType.Trade => 60,                // Medium-low priority - trading
+			Confirmation.EConfirmationType.Market => 70,               // Low priority - market listings
+			Confirmation.EConfirmationType.Generic => 80,              // Lower priority - generic confirmations
+			Confirmation.EConfirmationType.Unknown => 90,              // Lowest priority - unknown types
+			_ => 100                                                   // Fallback for new types
+		};
 	}
 
 	private static async Task LimitConfirmationsRequestsAsync() {
