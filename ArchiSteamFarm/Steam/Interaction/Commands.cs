@@ -165,6 +165,8 @@ public sealed class Commands {
 						return await ResponseStatus(access, SharedInfo.ASF, steamID).ConfigureAwait(false);
 					case "START":
 						return ResponseStart(access);
+					case "START!":
+						return await ResponseStart(access, true).ConfigureAwait(false);
 					case "STATS":
 						return ResponseStats(access);
 					case "STATUS":
@@ -318,6 +320,8 @@ public sealed class Commands {
 						return await ResponseResume(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "START":
 						return await ResponseStart(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "START!":
+						return await ResponseStart(access, Utilities.GetArgsAsText(args, 1, ","), true, steamID).ConfigureAwait(false);
 					case "STATUS":
 						return await ResponseStatus(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "STOP":
@@ -3179,6 +3183,20 @@ public sealed class Commands {
 		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
 	}
 
+	private async Task<string?> ResponseStart(EAccess access, bool forceRestart) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		if (access < EAccess.Master) {
+			return null;
+		}
+
+		(bool success, string message) = await Bot.Actions.Start(forceRestart).ConfigureAwait(false);
+
+		return FormatBotResponse(success ? message : Strings.FormatWarningFailedWithError(message));
+	}
+
 	private static async Task<string?> ResponseStart(EAccess access, string botNames, ulong steamID = 0) {
 		if (!Enum.IsDefined(access)) {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
@@ -3193,6 +3211,26 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.Commands.ResponseStart(GetProxyAccess(bot, access, steamID))))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private static async Task<string?> ResponseStart(EAccess access, string botNames, bool forceRestart, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseStart(GetProxyAccess(bot, access, steamID), forceRestart))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

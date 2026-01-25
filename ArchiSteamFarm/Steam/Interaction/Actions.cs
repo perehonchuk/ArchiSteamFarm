@@ -564,6 +564,22 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public async Task<(bool Success, string Message)> Start(bool forceRestart) {
+		if (!forceRestart) {
+			return Start();
+		}
+
+		// If bot is running, stop it first before starting
+		if (Bot.KeepRunning) {
+			await Bot.Stop().ConfigureAwait(false);
+		}
+
+		Utilities.InBackground(Bot.Start);
+
+		return (true, Strings.Done);
+	}
+
+	[PublicAPI]
 	public async Task<(bool Success, string Message)> Stop() {
 		if (!Bot.KeepRunning) {
 			return (false, Strings.BotAlreadyStopped);
