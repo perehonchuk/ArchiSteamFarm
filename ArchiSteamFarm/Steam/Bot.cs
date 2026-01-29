@@ -176,6 +176,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private readonly SemaphoreSlim InitializationSemaphore = new(1, 1);
 	private readonly SemaphoreSlim MessagingSemaphore = new(1, 1);
 	private readonly ConcurrentDictionary<UserNotificationsCallback.EUserNotification, uint> PastNotifications = new();
+	private readonly ConcurrentDictionary<ulong, Dictionary<string, string>> PipelineContexts = new();
 	private readonly SemaphoreSlim RefreshWebSessionSemaphore = new(1, 1);
 	private readonly SemaphoreSlim SendCompleteTypesSemaphore = new(1, 1);
 	private readonly SteamClient SteamClient;
@@ -502,6 +503,43 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		return SteamFamilySharingIDs.Contains(steamID) ? EAccess.FamilySharing : EAccess.None;
+	}
+
+	[PublicAPI]
+	public void SetPipelineContext(ulong steamID, string key, string value) {
+		if ((steamID == 0) || !new SteamID(steamID).IsIndividualAccount) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(key);
+		ArgumentException.ThrowIfNullOrEmpty(value);
+
+		Dictionary<string, string> context = PipelineContexts.GetOrAdd(steamID, static _ => new Dictionary<string, string>());
+		context[key] = value;
+	}
+
+	[PublicAPI]
+	public string? GetPipelineContext(ulong steamID, string key) {
+		if ((steamID == 0) || !new SteamID(steamID).IsIndividualAccount) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(key);
+
+		if (PipelineContexts.TryGetValue(steamID, out Dictionary<string, string>? context)) {
+			return context.TryGetValue(key, out string? value) ? value : null;
+		}
+
+		return null;
+	}
+
+	[PublicAPI]
+	public void ClearPipelineContext(ulong steamID) {
+		if ((steamID == 0) || !new SteamID(steamID).IsIndividualAccount) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
+		}
+
+		PipelineContexts.TryRemove(steamID, out _);
 	}
 
 	[PublicAPI]

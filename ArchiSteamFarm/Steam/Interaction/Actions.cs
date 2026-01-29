@@ -64,6 +64,22 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 		Bot = bot;
 	}
 
+	[PublicAPI]
+	public string? ExtractPipelineData(string? commandOutput) {
+		if (string.IsNullOrEmpty(commandOutput)) {
+			return null;
+		}
+
+		// Extract bot name prefix (e.g., "<BotName> data" -> "data")
+		int prefixEnd = commandOutput.IndexOf('>', StringComparison.Ordinal);
+
+		if ((prefixEnd > 0) && (prefixEnd < commandOutput.Length - 1)) {
+			return commandOutput[(prefixEnd + 1)..].Trim();
+		}
+
+		return commandOutput;
+	}
+
 	public void Dispose() {
 		// Those are objects that are always being created if constructor doesn't throw exception
 		TradingSemaphore.Dispose();

@@ -112,6 +112,11 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(message);
 
+		// Check if the command contains pipe operator for command chaining
+		if (message.Contains('|', StringComparison.Ordinal)) {
+			return await ResponsePipeline(access, message, steamID).ConfigureAwait(false);
+		}
+
 		string[] args = message.Split(Array.Empty<char>(), StringSplitOptions.RemoveEmptyEntries);
 
 		switch (args.Length) {
@@ -3740,6 +3745,122 @@ public sealed class Commands {
 		}
 
 		return FormatStaticResponse($"{(success ? Strings.Success : Strings.WarningFailed)}{(!string.IsNullOrEmpty(message) ? $" {message}" : "")}");
+	}
+
+	private async Task<string?> ResponsePipeline(EAccess access, string pipelineMessage, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(pipelineMessage);
+
+		// Split commands by pipe operator
+		string[] commands = pipelineMessage.Split('|', StringSplitOptions.RemoveEmptyEntries);
+
+		if (commands.Length == 0) {
+			return FormatBotResponse("Pipeline cannot be empty");
+		}
+
+		// Execute commands in sequence, passing output from one to the next
+		string? previousOutput = null;
+		string? currentCommand = null;
+
+		for (int i = 0; i < commands.Length; i++) {
+			currentCommand = commands[i].Trim();
+
+			// If this is not the first command, and we have previous output, check if command needs input
+			if ((i > 0) && !string.IsNullOrEmpty(previousOutput)) {
+				// Check if command contains placeholder for previous output
+				if (currentCommand.Contains("{}", StringComparison.Ordinal)) {
+					// Replace {} with previous output
+					currentCommand = currentCommand.Replace("{}", previousOutput, StringComparison.Ordinal);
+				} else {
+					// Append previous output as last argument
+					currentCommand = $"{currentCommand} {previousOutput}";
+				}
+			}
+
+			// Execute the command recursively (but without pipeline parsing to avoid infinite recursion)
+			string[] args = currentCommand.Split(Array.Empty<char>(), StringSplitOptions.RemoveEmptyEntries);
+
+			if (args.Length == 0) {
+				continue;
+			}
+
+			// Execute the command using existing command logic
+			previousOutput = await ExecuteSingleCommand(access, currentCommand, args, steamID).ConfigureAwait(false);
+
+			// If any command in the pipeline fails, stop execution
+			if (string.IsNullOrEmpty(previousOutput)) {
+				return FormatBotResponse($"Pipeline stopped at command {i + 1}: {commands[i].Trim()}");
+			}
+		}
+
+		return previousOutput;
+	}
+
+	private async Task<string?> ExecuteSingleCommand(EAccess access, string message, string[] args, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(message);
+		ArgumentNullException.ThrowIfNull(args);
+
+		if (args.Length == 0) {
+			throw new ArgumentException("Arguments cannot be empty", nameof(args));
+		}
+
+		// This is a simplified version of the Response method that executes a single command
+		// without pipeline processing
+		switch (args.Length) {
+			case 1:
+				switch (args[0].ToUpperInvariant()) {
+					case "2FA":
+						return await Response2FA(access).ConfigureAwait(false);
+					case "BALANCE":
+						return ResponseWalletBalance(access);
+					case "BGR":
+						return ResponseBackgroundGamesRedeemer(access);
+					case "FB":
+						return ResponseFarmingBlacklist(access);
+					case "FQ":
+						return ResponseFarmingQueue(access);
+					case "HELP":
+						return ResponseHelp(access);
+					case "LEVEL":
+						return await ResponseLevel(access).ConfigureAwait(false);
+					case "STATUS":
+						return ResponseStatus(access).Response;
+					case "VERSION":
+						return ResponseVersion(access);
+					default:
+						string? pluginsResponse = await PluginsCore.OnBotCommand(Bot, access, message, args, steamID).ConfigureAwait(false);
+
+						return !string.IsNullOrEmpty(pluginsResponse) ? pluginsResponse : ResponseUnknown(access);
+				}
+			default:
+				switch (args[0].ToUpperInvariant()) {
+					case "2FA":
+						return await Response2FA(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "BALANCE":
+						return await ResponseWalletBalance(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "BGR":
+						return await ResponseBackgroundGamesRedeemer(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "FB":
+						return await ResponseFarmingBlacklist(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "FQ":
+						return await ResponseFarmingQueue(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "LEVEL":
+						return await ResponseLevel(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					case "STATUS":
+						return await ResponseStatus(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
+					default:
+						string? pluginsResponse = await PluginsCore.OnBotCommand(Bot, access, message, args, steamID).ConfigureAwait(false);
+
+						return !string.IsNullOrEmpty(pluginsResponse) ? pluginsResponse : ResponseUnknown(access);
+				}
+		}
 	}
 
 	private string? ResponseVersion(EAccess access) {
