@@ -913,6 +913,10 @@ public sealed class Commands {
 					redeemFlags |= ERedeemFlags.SkipKeepMissingGames;
 
 					break;
+				case "T" or "THROTTLE":
+					redeemFlags |= ERedeemFlags.Throttle;
+
+					break;
 				case "V" or "VALIDATE":
 					redeemFlags |= ERedeemFlags.Validate;
 
@@ -2640,6 +2644,11 @@ public sealed class Commands {
 							continue;
 						}
 
+						// Apply throttling delay if requested to avoid rate limiting
+						if (redeemFlags.HasFlag(ERedeemFlags.Throttle) && (previousKey == key) && (triedBots.Count > 0)) {
+							await Task.Delay(3000).ConfigureAwait(false);
+						}
+
 						if ((currentBot == Bot) && redeemFlags.HasFlag(ERedeemFlags.SkipInitial)) {
 							// Either bot will be changed, or loop aborted
 							currentBot = null;
@@ -2709,8 +2718,14 @@ public sealed class Commands {
 											unusedKeys.Remove(key);
 										}
 
-										// Next key
-										key = keysEnumerator.MoveNext() ? keysEnumerator.Current : null;
+										// Apply throttling delay before moving to next key if requested
+										if (redeemFlags.HasFlag(ERedeemFlags.Throttle) && keysEnumerator.MoveNext()) {
+											await Task.Delay(2500).ConfigureAwait(false);
+											key = keysEnumerator.Current;
+										} else {
+											// Next key
+											key = keysEnumerator.MoveNext() ? keysEnumerator.Current : null;
+										}
 
 										if (purchaseResultDetail == EPurchaseResultDetail.NoDetail || (distribute && !keepMissingGames)) {
 											// Next bot (if needed)
@@ -2726,8 +2741,14 @@ public sealed class Commands {
 									case EPurchaseResultDetail.NoWallet:
 									case EPurchaseResultDetail.RestrictedCountry:
 										if (!forward || (keepMissingGames && (purchaseResultDetail != EPurchaseResultDetail.AlreadyPurchased))) {
-											// Next key
-											key = keysEnumerator.MoveNext() ? keysEnumerator.Current : null;
+											// Apply throttling delay before moving to next key if requested
+											if (redeemFlags.HasFlag(ERedeemFlags.Throttle) && keysEnumerator.MoveNext()) {
+												await Task.Delay(2500).ConfigureAwait(false);
+												key = keysEnumerator.Current;
+											} else {
+												// Next key
+												key = keysEnumerator.MoveNext() ? keysEnumerator.Current : null;
+											}
 
 											// Next bot (if needed)
 											break;
@@ -3794,6 +3815,7 @@ public sealed class Commands {
 		ForceKeepMissingGames = 64,
 		SkipKeepMissingGames = 128,
 		ForceAssumeWalletKeyOnBadActivationCode = 256,
-		SkipAssumeWalletKeyOnBadActivationCode = 512
+		SkipAssumeWalletKeyOnBadActivationCode = 512,
+		Throttle = 1024
 	}
 }
