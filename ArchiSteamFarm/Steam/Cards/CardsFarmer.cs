@@ -54,6 +54,8 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private const byte DaysToIgnoreRiskyAppIDs = 14; // How many days since determining that game is not candidate for idling, we assume that to still be the case, in risky approach
 	private const byte ExtraFarmingDelaySeconds = 15; // In seconds, how much time to add on top of FarmingDelay (helps fighting misc time differences of Steam network)
 	private const byte HoursToIgnore = 1; // How many hours we ignore unreleased appIDs and don't bother checking them again
+	private const byte StallDetectionThreshold = 3; // Number of consecutive checks without progress before considering a game stalled
+	private const byte StallDetectionMinutes = 90; // Minutes without card drop before checking for stall
 
 	[PublicAPI]
 	public static readonly FrozenSet<uint> SalesBlacklist = [267420, 303700, 335590, 368020, 425280, 480730, 566020, 639900, 762800, 876740, 991980, 1195670, 1343890, 1465680, 1658760, 1797760, 2021850, 2243720, 2459330, 2640280, 2861690, 2861720, 3558920];
@@ -130,6 +132,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	private readonly Timer? IdleFarmingTimer;
 
 	private readonly ConcurrentDictionary<uint, DateTime> LocallyIgnoredAppIDs = new();
+	private readonly ConcurrentDictionary<uint, DateTime> TemporarilyStalledAppIDs = new(); // Games temporarily skipped due to stall detection
 
 	private IEnumerable<ConcurrentDictionary<uint, DateTime>> SourcesOfIgnoredAppIDs {
 		get {
@@ -1405,6 +1408,32 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			return false;
 		}
 
+		// Check if card count has decreased (progress was made)
+		if (game.CardsRemaining < game.LastKnownCardsRemaining) {
+			// Progress detected - card dropped!
+			game.LastCardDropTime = DateTime.UtcNow;
+			game.LastKnownCardsRemaining = game.CardsRemaining;
+			game.ConsecutiveStallChecks = 0;
+
+			// Remove from temporarily stalled list if it was there
+			TemporarilyStalledAppIDs.TryRemove(game.AppID, out _);
+		} else {
+			// No progress - check if we should mark as stalled
+			TimeSpan timeSinceLastDrop = DateTime.UtcNow - game.LastCardDropTime;
+
+			if (timeSinceLastDrop.TotalMinutes >= StallDetectionMinutes) {
+				game.ConsecutiveStallChecks++;
+
+				if (game.ConsecutiveStallChecks >= StallDetectionThreshold) {
+					// Game appears to be stalled - temporarily skip it
+					Bot.ArchiLogger.LogGenericWarning($"Game {game.AppID} ({game.GameName}) appears stalled (no cards for {(int)timeSinceLastDrop.TotalMinutes} minutes). Temporarily skipping...");
+					TemporarilyStalledAppIDs[game.AppID] = DateTime.UtcNow.AddHours(2); // Skip for 2 hours
+
+					return false;
+				}
+			}
+		}
+
 		return true;
 	}
 
@@ -1414,6 +1443,18 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		if (SalesBlacklist.Contains(appID) || (ASF.GlobalConfig?.Blacklist.Contains(appID) == true) || Bot.IsBlacklistedFromIdling(appID) || (Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmPriorityQueueOnly) && !Bot.IsPriorityIdling(appID))) {
 			// We're configured to ignore this appID, so skip it
 			return false;
+		}
+
+		// Check if game is temporarily stalled
+		if (TemporarilyStalledAppIDs.TryGetValue(appID, out DateTime stalledUntil)) {
+			if (stalledUntil > DateTime.UtcNow) {
+				// Still in stall cooldown period
+				return false;
+			}
+
+			// Stall cooldown expired, give it another try
+			TemporarilyStalledAppIDs.TryRemove(appID, out _);
+			Bot.ArchiLogger.LogGenericInfo($"Stall cooldown expired for game {appID}, will retry farming...");
 		}
 
 		foreach (ConcurrentDictionary<uint, DateTime> sourceOfIgnoredAppIDs in SourcesOfIgnoredAppIDs) {

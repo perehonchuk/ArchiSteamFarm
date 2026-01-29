@@ -48,6 +48,11 @@ public sealed class Game : IEquatable<Game> {
 
 	internal uint PlayableAppID { get; set; }
 
+	// Progress tracking for stall detection
+	internal DateTime LastCardDropTime { get; set; } = DateTime.UtcNow;
+	internal ushort LastKnownCardsRemaining { get; set; }
+	internal uint ConsecutiveStallChecks { get; set; }
+
 	internal Game(uint appID, string gameName, float hoursPlayed, ushort cardsRemaining, byte badgeLevel) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 		ArgumentException.ThrowIfNullOrEmpty(gameName);
@@ -60,6 +65,7 @@ public sealed class Game : IEquatable<Game> {
 		BadgeLevel = badgeLevel;
 
 		PlayableAppID = appID;
+		LastKnownCardsRemaining = cardsRemaining;
 	}
 
 	public bool Equals(Game? other) => (other != null) && (ReferenceEquals(other, this) || ((AppID == other.AppID) && (BadgeLevel == other.BadgeLevel) && (GameName == other.GameName)));
