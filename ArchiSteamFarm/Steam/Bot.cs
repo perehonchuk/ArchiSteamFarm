@@ -565,6 +565,21 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					result.UnionWith(onlineBots);
 
 					continue;
+				case "@LIMITED":
+					IEnumerable<Bot> limitedBots = Bots.Where(static bot => bot.Value.IsAccountLimited).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(limitedBots);
+
+					continue;
+				case "@2FA":
+					IEnumerable<Bot> authenticatorBots = Bots.Where(static bot => bot.Value.HasMobileAuthenticator).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(authenticatorBots);
+
+					continue;
+				case "@CARDS":
+					IEnumerable<Bot> cardReceivingBots = Bots.Where(static bot => bot.Value.CanReceiveSteamCards).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(cardReceivingBots);
+
+					continue;
 			}
 
 			if ((botName.Length > 2) && SharedInfo.RangeIndicators.Any(rangeIndicator => botName.Contains(rangeIndicator, StringComparison.Ordinal))) {

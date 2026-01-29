@@ -422,6 +422,13 @@ public sealed class Trading : IDisposable {
 			throw new InvalidOperationException(nameof(Bot.Bots));
 		}
 
+		// Reject trades involving Steam cards if account is limited or locked
+		if (!Bot.CanReceiveSteamCards && (tradeOffer.ItemsToReceive.Any(static item => item.Type == EAssetType.TradingCard) || tradeOffer.ItemsToGive.Any(static item => item.Type == EAssetType.TradingCard))) {
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatBotTradeOfferResult(tradeOffer.TradeOfferID, ParseTradeResult.EResult.Rejected, $"{nameof(Bot.CanReceiveSteamCards)} = {false}"));
+
+			return ParseTradeResult.EResult.Rejected;
+		}
+
 		if (tradeOffer.OtherSteamID64 != 0) {
 			// Always deny trades from blacklisted steamIDs
 			if (Bot.IsBlacklistedFromTrades(tradeOffer.OtherSteamID64)) {
