@@ -783,26 +783,30 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 			// Now the algorithm used for farming depends on whether account is restricted or not
 			if (Bot.BotConfig.HoursUntilCardDrops > 0) {
-				// If we have restricted card drops, we use complex algorithm
-				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Complex"));
+				// If we have restricted card drops, we use adaptive algorithm
+				Bot.ArchiLogger.LogGenericInfo(Strings.FormatChosenFarmingAlgorithm("Adaptive"));
 
 				while (GamesToFarm.Count > 0) {
-					// Initially we're going to farm games that passed our HoursUntilCardDrops
-					// This block is almost identical to Simple algorithm, we just copy appropriate items from GamesToFarm into innerGamesToFarm
-					HashSet<Game> innerGamesToFarm = GamesToFarm.Where(game => game.HoursPlayed >= Bot.BotConfig.HoursUntilCardDrops).ToHashSet();
+					// Adaptive algorithm: First farm high-value games that passed HoursUntilCardDrops
+					// High-value is determined by cards remaining and priority status
+					HashSet<Game> readyGames = GamesToFarm.Where(game => game.HoursPlayed >= Bot.BotConfig.HoursUntilCardDrops).ToHashSet();
+					HashSet<Game> highValueReadyGames = readyGames.Where(game => game.CardsRemaining >= 5 || Bot.IsPriorityIdling(game.AppID)).ToHashSet();
 
-					while (innerGamesToFarm.Count > 0) {
-						Game game = innerGamesToFarm.First();
+					// Farm high-value ready games solo first for maximum efficiency
+					while (highValueReadyGames.Count > 0) {
+						Game game = highValueReadyGames.First();
 
 						if (!await IsPlayableGame(game).ConfigureAwait(false)) {
 							GamesToFarm.Remove(game);
-							innerGamesToFarm.Remove(game);
+							highValueReadyGames.Remove(game);
+							readyGames.Remove(game);
 
 							continue;
 						}
 
 						if (await FarmSolo(game).ConfigureAwait(false)) {
-							innerGamesToFarm.Remove(game);
+							highValueReadyGames.Remove(game);
+							readyGames.Remove(game);
 
 							continue;
 						}
@@ -814,8 +818,33 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 						return;
 					}
 
-					// At this point we have no games past HoursUntilCardDrops anymore, so we're going to farm all other ones
-					// In order to maximize efficiency, we'll take games that are closest to our HoursPlayed first
+					// Then farm remaining ready games (low-value) solo
+					while (readyGames.Count > 0) {
+						Game game = readyGames.First();
+
+						if (!await IsPlayableGame(game).ConfigureAwait(false)) {
+							GamesToFarm.Remove(game);
+							readyGames.Remove(game);
+
+							continue;
+						}
+
+						if (await FarmSolo(game).ConfigureAwait(false)) {
+							readyGames.Remove(game);
+
+							continue;
+						}
+
+						NowFarming = false;
+
+						GamesToFarm.Clear();
+
+						return;
+					}
+
+					// At this point we have no games past HoursUntilCardDrops anymore
+					// Adaptive strategy: Farm games in batches based on proximity to threshold
+					HashSet<Game> innerGamesToFarm = [];
 
 					// We must call ToList() here as we can't remove items while enumerating
 					foreach (Game game in GamesToFarm.AsLinqThreadSafeEnumerable().OrderByDescending(static game => game.HoursPlayed).ToList()) {
@@ -827,8 +856,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 
 						innerGamesToFarm.Add(game);
 
-						// There is no need to check all games at once, allow maximum of MaxGamesPlayedConcurrently in this batch
-						if (innerGamesToFarm.Count >= ArchiHandler.MaxGamesPlayedConcurrently) {
+						// Adaptive batch sizing: Use smaller batches for games close to threshold
+						float maxHours = innerGamesToFarm.Max(static g => g.HoursPlayed);
+						float hoursRemaining = Bot.BotConfig.HoursUntilCardDrops - maxHours;
+						int batchSize = hoursRemaining < 0.5f ? 16 : (hoursRemaining < 1.5f ? 24 : ArchiHandler.MaxGamesPlayedConcurrently);
+
+						if (innerGamesToFarm.Count >= batchSize) {
 							break;
 						}
 					}
@@ -838,7 +871,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 						break;
 					}
 
-					// Otherwise, we farm our innerGamesToFarm batch until any game hits HoursUntilCardDrops
+					// Farm the batch until any game hits HoursUntilCardDrops
 					if (await FarmMultiple(innerGamesToFarm).ConfigureAwait(false)) {
 						Bot.ArchiLogger.LogGenericInfo(Strings.FormatIdlingFinishedForGames(string.Join(", ", innerGamesToFarm.Select(static game => game.AppID))));
 					} else {
@@ -1434,8 +1467,29 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	}
 
 	private async Task SortGamesToFarm() {
-		// Put priority idling appIDs on top
-		IOrderedEnumerable<Game> orderedGamesToFarm = GamesToFarm.AsLinqThreadSafeEnumerable().OrderByDescending(game => Bot.IsPriorityIdling(game.AppID));
+		// Calculate adaptive priority scores for all games
+		foreach (Game game in GamesToFarm) {
+			// Base score from cards remaining
+			float score = game.CardsRemaining * 10;
+
+			// Bonus for user priority queue
+			if (Bot.IsPriorityIdling(game.AppID)) {
+				score += 1000;
+			}
+
+			// Bonus for higher badge levels (more committed players)
+			score += game.BadgeLevel * 5;
+
+			// Penalty for low hours on restricted accounts
+			if ((Bot.BotConfig.HoursUntilCardDrops > 0) && (game.HoursPlayed < Bot.BotConfig.HoursUntilCardDrops)) {
+				score -= (Bot.BotConfig.HoursUntilCardDrops - game.HoursPlayed) * 3;
+			}
+
+			game.AdaptivePriorityScore = score;
+		}
+
+		// Put priority idling appIDs on top, now also considering adaptive score
+		IOrderedEnumerable<Game> orderedGamesToFarm = GamesToFarm.AsLinqThreadSafeEnumerable().OrderByDescending(game => Bot.IsPriorityIdling(game.AppID)).ThenByDescending(static game => game.AdaptivePriorityScore);
 
 		foreach (BotConfig.EFarmingOrder farmingOrder in Bot.BotConfig.FarmingOrders) {
 			switch (farmingOrder) {

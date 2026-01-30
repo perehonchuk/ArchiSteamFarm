@@ -48,6 +48,10 @@ public sealed class Game : IEquatable<Game> {
 
 	internal uint PlayableAppID { get; set; }
 
+	// Adaptive farming priority score - higher is better
+	// Based on cards remaining, badge level, and user priority
+	internal float AdaptivePriorityScore { get; set; }
+
 	internal Game(uint appID, string gameName, float hoursPlayed, ushort cardsRemaining, byte badgeLevel) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 		ArgumentException.ThrowIfNullOrEmpty(gameName);
