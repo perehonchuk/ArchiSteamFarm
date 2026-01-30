@@ -312,6 +312,12 @@ public sealed class Commands {
 						return await ResponseRedeemPoints(access, args[1], Utilities.GetArgsAsText(args, 2, ","), steamID).ConfigureAwait(false);
 					case "RP" or "REDEEMPOINTS":
 						return await ResponseRedeemPoints(access, args[1]).ConfigureAwait(false);
+					case "RP^" or "REDEEMPOINTS^" when args.Length > 3:
+						return await ResponseAdvancedRedeemPoints(access, args[1], args[2], byte.Parse(args[3]), steamID).ConfigureAwait(false);
+					case "RP^" or "REDEEMPOINTS^" when args.Length > 2:
+						return await ResponseAdvancedRedeemPoints(access, args[1], Utilities.GetArgsAsText(args, 2, ","), 3, steamID).ConfigureAwait(false);
+					case "RP^" or "REDEEMPOINTS^":
+						return await ResponseAdvancedRedeemPoints(access, args[1], 3).ConfigureAwait(false);
 					case "RESET":
 						return await ResponseReset(access, Utilities.GetArgsAsText(args, 1, ","), steamID).ConfigureAwait(false);
 					case "RESUME":
@@ -2969,6 +2975,76 @@ public sealed class Commands {
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseRedeemPoints(GetProxyAccess(bot, access, steamID), targetDefinitionIDs))).ConfigureAwait(false);
+
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
+
+		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
+	}
+
+	private async Task<string?> ResponseAdvancedRedeemPoints(EAccess access, string targetDefinitionIDs, byte maxRetries = 3) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(targetDefinitionIDs);
+		ArgumentOutOfRangeException.ThrowIfZero(maxRetries);
+
+		if (access < EAccess.Operator) {
+			return null;
+		}
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return FormatBotResponse(Strings.BotNotConnected);
+		}
+
+		string[] definitions = targetDefinitionIDs.Split(SharedInfo.ListElementSeparators, StringSplitOptions.RemoveEmptyEntries);
+
+		if (definitions.Length == 0) {
+			return FormatBotResponse(Strings.FormatErrorIsEmpty(nameof(definitions)));
+		}
+
+		HashSet<uint> definitionIDs = new(definitions.Length);
+
+		foreach (string definition in definitions) {
+			string definitionToParse = definition.EndsWith('!') ? definition[..^1] : definition;
+
+			if (!uint.TryParse(definitionToParse, out uint definitionID) || (definitionID == 0)) {
+				return FormatBotResponse(Strings.FormatErrorIsInvalid(nameof(definition)));
+			}
+
+			definitionIDs.Add(definitionID);
+		}
+
+		IReadOnlyCollection<PointsRedemptionResult> results = await Bot.Actions.RedeemPointsBatch(definitionIDs, true, maxRetries).ConfigureAwait(false);
+
+		StringBuilder response = new();
+
+		foreach (PointsRedemptionResult result in results) {
+			string attemptInfo = result.AttemptNumber > 1 ? $" (attempt {result.AttemptNumber}/{maxRetries})" : "";
+			string costInfo = result.PointsCost.HasValue ? $" [cost: {result.PointsCost.Value} points]" : "";
+
+			response.AppendLine(FormatBotResponse($"{result.DefinitionID}: {result.Result}{attemptInfo}{costInfo}"));
+		}
+
+		return response.Length > 0 ? response.ToString() : null;
+	}
+
+	private static async Task<string?> ResponseAdvancedRedeemPoints(EAccess access, string botNames, string targetDefinitionIDs, byte maxRetries, ulong steamID = 0) {
+		if (!Enum.IsDefined(access)) {
+			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
+		}
+
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentException.ThrowIfNullOrEmpty(targetDefinitionIDs);
+		ArgumentOutOfRangeException.ThrowIfZero(maxRetries);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return access >= EAccess.Owner ? FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
+		}
+
+		IList<string?> results = await Utilities.InParallel(bots.Select(bot => bot.Commands.ResponseAdvancedRedeemPoints(GetProxyAccess(bot, access, steamID), targetDefinitionIDs, maxRetries))).ConfigureAwait(false);
 
 		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result)).Select(static result => result!)];
 

@@ -374,6 +374,68 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public async Task<IReadOnlyCollection<PointsRedemptionResult>> RedeemPointsBatch(IReadOnlyCollection<uint> definitionIDs, bool forced = false, byte maxRetries = 3) {
+		if ((definitionIDs == null) || (definitionIDs.Count == 0)) {
+			throw new ArgumentNullException(nameof(definitionIDs));
+		}
+
+		ArgumentOutOfRangeException.ThrowIfZero(maxRetries);
+
+		if (!Bot.IsConnectedAndLoggedOn) {
+			return definitionIDs.Select(id => new PointsRedemptionResult(id, EResult.NoConnection, 1)).ToList();
+		}
+
+		// Fetch all definitions upfront for validation
+		Dictionary<uint, LoyaltyRewardDefinition>? definitions = await Bot.Actions.GetRewardItems(definitionIDs.ToHashSet()).ConfigureAwait(false);
+
+		if (definitions == null) {
+			return definitionIDs.Select(id => new PointsRedemptionResult(id, EResult.Timeout, 1)).ToList();
+		}
+
+		List<PointsRedemptionResult> results = new(definitionIDs.Count);
+		Dictionary<uint, byte> retryTracker = new(definitionIDs.Count);
+
+		// Process each definition ID with retry logic
+		foreach (uint definitionID in definitionIDs) {
+			if (!definitions.TryGetValue(definitionID, out LoyaltyRewardDefinition? definition)) {
+				results.Add(new PointsRedemptionResult(definitionID, EResult.InvalidParam, 1));
+
+				continue;
+			}
+
+			if (!forced && (definition.point_cost > 0)) {
+				results.Add(new PointsRedemptionResult(definitionID, EResult.InvalidState, 1, definition.point_cost));
+
+				continue;
+			}
+
+			byte attemptNumber = 1;
+			EResult result = EResult.Fail;
+
+			// Retry loop for transient failures
+			while (attemptNumber <= maxRetries) {
+				result = definition.type == 2 ? await Bot.ArchiHandler.RedeemPointsForBadgeLevel(definitionID).ConfigureAwait(false) : await Bot.ArchiHandler.RedeemPoints(definitionID).ConfigureAwait(false);
+
+				// Success or permanent failure - don't retry
+				if ((result == EResult.OK) || (result == EResult.InvalidParam) || (result == EResult.InvalidState) || (result == EResult.DuplicateRequest) || (result == EResult.InsufficientFunds)) {
+					break;
+				}
+
+				// Transient failure - retry after delay
+				if (attemptNumber < maxRetries) {
+					await Task.Delay(TimeSpan.FromSeconds(2 * attemptNumber)).ConfigureAwait(false);
+				}
+
+				attemptNumber++;
+			}
+
+			results.Add(new PointsRedemptionResult(definitionID, result, attemptNumber, definition.point_cost));
+		}
+
+		return results;
+	}
+
+	[PublicAPI]
 	public async Task<EResult> RemoveLicenseApp(uint appID) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 
