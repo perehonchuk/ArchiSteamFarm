@@ -137,6 +137,11 @@ public sealed class BotDatabase : GenericDatabase {
 	[JsonDisallowNull]
 	[JsonInclude]
 	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+	internal ObservableConcurrentDictionary<uint, float> GamePlaytimeTracker { get; private init; } = new();
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
 	internal ConcurrentHashSet<uint> MatchActivelyBlacklistAppIDs { get; private init; } = [];
 
 	[JsonInclude]
@@ -207,6 +212,7 @@ public sealed class BotDatabase : GenericDatabase {
 		FarmingPriorityQueueAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyIgnoredAppIDs.OnModified += OnObjectModified;
 		FarmingRiskyPrioritizedAppIDs.OnModified += OnObjectModified;
+		GamePlaytimeTracker.OnModified += OnObjectModified;
 		MatchActivelyBlacklistAppIDs.OnModified += OnObjectModified;
 		TradingBlacklistSteamIDs.OnModified += OnObjectModified;
 	}
@@ -260,6 +266,9 @@ public sealed class BotDatabase : GenericDatabase {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeFarmingRiskyPrioritizedAppIDs() => FarmingRiskyPrioritizedAppIDs.Count > 0;
+
+	[UsedImplicitly]
+	public bool ShouldSerializeGamePlaytimeTracker() => !GamePlaytimeTracker.IsEmpty;
 
 	[UsedImplicitly]
 	public bool ShouldSerializeGamesToRedeemInBackground() => HasGamesToRedeemInBackground;

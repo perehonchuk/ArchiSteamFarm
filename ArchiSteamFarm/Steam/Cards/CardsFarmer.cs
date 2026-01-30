@@ -437,6 +437,16 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		if (game.CardsRemaining > 0) {
 			Bot.BotDatabase.FarmingRiskyPrioritizedAppIDs.Add(appID);
 
+			// Track playtime and check if game exceeds max playtime threshold
+			Bot.BotDatabase.GamePlaytimeTracker[appID] = hours;
+
+			// Skip games that exceed MaxPlaytimeHoursForFarming threshold if configured
+			if ((Bot.BotConfig.MaxPlaytimeHoursForFarming > 0) && (hours >= Bot.BotConfig.MaxPlaytimeHoursForFarming)) {
+				Bot.ArchiLogger.LogGenericInfo(string.Format(Strings.IdlingGameNotPossible, $"{name} [{appID}]", hours, Bot.BotConfig.MaxPlaytimeHoursForFarming));
+
+				return;
+			}
+
 			GamesToFarm.Add(new Game(appID, name, hours, game.CardsRemaining, badgeLevel));
 		}
 	}
@@ -736,6 +746,16 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			// OR we strongly believe that Steam lied to us, in this case we will need to check game individually (cardsRemaining == 0)
 			if (cardsRemaining > 0) {
 				Bot.BotDatabase.FarmingRiskyPrioritizedAppIDs.Add(appID);
+
+				// Track playtime and check if game exceeds max playtime threshold
+				Bot.BotDatabase.GamePlaytimeTracker[appID] = hours;
+
+				// Skip games that exceed MaxPlaytimeHoursForFarming threshold if configured
+				if ((Bot.BotConfig.MaxPlaytimeHoursForFarming > 0) && (hours >= Bot.BotConfig.MaxPlaytimeHoursForFarming)) {
+					Bot.ArchiLogger.LogGenericInfo(string.Format(Strings.IdlingGameNotPossible, $"{name} [{appID}]", hours, Bot.BotConfig.MaxPlaytimeHoursForFarming));
+
+					continue;
+				}
 
 				GamesToFarm.Add(new Game(appID, name, hours, cardsRemaining, badgeLevel));
 			} else {
@@ -1343,6 +1363,16 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 			}
 
 			Bot.BotDatabase.FarmingRiskyPrioritizedAppIDs.Add(appID);
+
+			// Track playtime and check if game exceeds max playtime threshold
+			Bot.BotDatabase.GamePlaytimeTracker[appID] = game.HoursPlayed;
+
+			// Skip games that exceed MaxPlaytimeHoursForFarming threshold if configured
+			if ((Bot.BotConfig.MaxPlaytimeHoursForFarming > 0) && (game.HoursPlayed >= Bot.BotConfig.MaxPlaytimeHoursForFarming)) {
+				Bot.ArchiLogger.LogGenericInfo(string.Format(Strings.IdlingGameNotPossible, $"{game.GameName} [{appID}]", game.HoursPlayed, Bot.BotConfig.MaxPlaytimeHoursForFarming));
+
+				continue;
+			}
 
 			GamesToFarm.Add(game);
 

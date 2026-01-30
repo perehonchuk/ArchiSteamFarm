@@ -73,6 +73,9 @@ public sealed class BotConfig {
 	public const byte DefaultHoursUntilCardDrops = 3;
 
 	[PublicAPI]
+	public const ushort DefaultMaxPlaytimeHoursForFarming = 0;
+
+	[PublicAPI]
 	public const string? DefaultMachineName = null;
 
 	[PublicAPI]
@@ -235,6 +238,10 @@ public sealed class BotConfig {
 	[JsonInclude]
 	[Range(byte.MinValue, byte.MaxValue)]
 	public byte HoursUntilCardDrops { get; init; } = DefaultHoursUntilCardDrops;
+
+	[JsonInclude]
+	[Range(ushort.MinValue, ushort.MaxValue)]
+	public ushort MaxPlaytimeHoursForFarming { get; init; } = DefaultMaxPlaytimeHoursForFarming;
 
 	[JsonDisallowNull]
 	[JsonInclude]
@@ -411,6 +418,9 @@ public sealed class BotConfig {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeHoursUntilCardDrops() => !Saving || (HoursUntilCardDrops != DefaultHoursUntilCardDrops);
+
+	[UsedImplicitly]
+	public bool ShouldSerializeMaxPlaytimeHoursForFarming() => !Saving || (MaxPlaytimeHoursForFarming != DefaultMaxPlaytimeHoursForFarming);
 
 	[UsedImplicitly]
 	public bool ShouldSerializeLootableTypes() => !Saving || ((LootableTypes != DefaultLootableTypes) && !LootableTypes.SetEquals(DefaultLootableTypes));
