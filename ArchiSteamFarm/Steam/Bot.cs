@@ -75,6 +75,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private const byte MinimumAccessTokenValidityMinutes = 5;
 	private const byte RedeemCooldownInHours = 1; // 1 hour since first redeem attempt, this is a limitation enforced by Steam
 	private const byte RegionRestrictionPlayableBlockMonths = 3;
+	private const byte WarmupDelaySeconds = 30; // Delay before bot starts farming after initialization
 
 	[PublicAPI]
 	public static IReadOnlyDictionary<string, Bot>? BotsReadOnly => Bots;
@@ -290,6 +291,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	internal byte HeartBeatFailures { get; private set; }
 	internal bool PlayingBlocked { get; private set; }
 	internal bool PlayingWasBlocked { get; private set; }
+	internal bool WarmingUp { get; private set; }
 
 	private DateTime? AccessTokenValidUntil;
 	private string? AuthCode;
@@ -297,6 +299,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private Timer? ConnectionFailureTimer;
 	private bool FirstTradeSent;
 	private Timer? GamesRedeemerInBackgroundTimer;
+	private Timer? WarmupTimer;
 	private string? IPCountryCode;
 	private EResult LastLogOnResult;
 	private DateTime LastLogonSessionReplaced;
@@ -423,6 +426,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		RefreshTokensTimer?.Dispose();
 		SendItemsTimer?.Dispose();
 		TradeCheckTimer?.Dispose();
+		WarmupTimer?.Dispose();
 	}
 
 	public async ValueTask DisposeAsync() {
@@ -461,6 +465,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		if (TradeCheckTimer != null) {
 			await TradeCheckTimer.DisposeAsync().ConfigureAwait(false);
+		}
+
+		if (WarmupTimer != null) {
+			await WarmupTimer.DisposeAsync().ConfigureAwait(false);
 		}
 	}
 
@@ -1989,6 +1997,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 
 			KeepRunning = false;
+			WarmingUp = false;
+
+			if (WarmupTimer != null) {
+				await WarmupTimer.DisposeAsync().ConfigureAwait(false);
+				WarmupTimer = null;
+			}
 
 			ArchiLogger.LogGenericInfo(Strings.BotStopping);
 
@@ -2518,6 +2532,23 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		CardsFarmer.SetInitialState(BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmingPausedByDefault));
+
+		// Set warmup state and start warmup timer
+		WarmingUp = true;
+
+		if (WarmupTimer != null) {
+			await WarmupTimer.DisposeAsync().ConfigureAwait(false);
+		}
+
+		WarmupTimer = new Timer(
+			_ => {
+				WarmingUp = false;
+				Utilities.InBackground(async () => await CardsFarmer.StartFarming().ConfigureAwait(false));
+			},
+			null,
+			TimeSpan.FromSeconds(WarmupDelaySeconds),
+			Timeout.InfiniteTimeSpan
+		);
 
 		if (SendItemsTimer != null) {
 			await SendItemsTimer.DisposeAsync().ConfigureAwait(false);

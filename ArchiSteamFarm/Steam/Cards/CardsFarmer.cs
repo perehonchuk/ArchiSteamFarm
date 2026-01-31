@@ -313,7 +313,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	}
 
 	internal async Task StartFarming() {
-		if (NowFarming || Paused || !Bot.IsPlayingPossible) {
+		if (NowFarming || Paused || !Bot.IsPlayingPossible || Bot.WarmingUp) {
 			return;
 		}
 
@@ -327,7 +327,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		await FarmingInitializationSemaphore.WaitAsync().ConfigureAwait(false);
 
 		try {
-			if (NowFarming || Paused || !Bot.IsPlayingPossible) {
+			if (NowFarming || Paused || !Bot.IsPlayingPossible || Bot.WarmingUp) {
 				return;
 			}
 

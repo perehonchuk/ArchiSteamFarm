@@ -3227,6 +3227,10 @@ public sealed class Commands {
 			return (FormatBotResponse(Bot.KeepRunning ? Strings.BotStatusConnecting : Strings.BotStatusNotRunning), Bot);
 		}
 
+		if (Bot.WarmingUp) {
+			return (FormatBotResponse("Warming up..."), Bot);
+		}
+
 		if (Bot.PlayingBlocked) {
 			return (FormatBotResponse(Strings.BotStatusPlayingNotAvailable), Bot);
 		}
