@@ -301,13 +301,17 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 
 		await Bot.CardsFarmer.Pause(permanent).ConfigureAwait(false);
 
-		if (!permanent && (Bot.BotConfig.GamesPlayedWhileIdle.Count > 0)) {
-			// We want to let family sharing users access our library, and in this case we must also stop GamesPlayedWhileIdle
-			// We add extra delay because OnFarmingStopped() also executes PlayGames()
-			// Despite of proper order on our end, Steam network might not respect it
-			await Task.Delay(Bot.CallbackSleep).ConfigureAwait(false);
+		if (!permanent) {
+			Bot.ArchiLogger.LogGenericInfo("Farming temporarily paused. Will auto-resume on login or playing event.");
 
-			await Bot.ArchiHandler.PlayGames([], Bot.BotConfig.CustomGamePlayedWhileIdle).ConfigureAwait(false);
+			if (Bot.BotConfig.GamesPlayedWhileIdle.Count > 0) {
+				// We want to let family sharing users access our library, and in this case we must also stop GamesPlayedWhileIdle
+				// We add extra delay because OnFarmingStopped() also executes PlayGames()
+				// Despite of proper order on our end, Steam network might not respect it
+				await Task.Delay(Bot.CallbackSleep).ConfigureAwait(false);
+
+				await Bot.ArchiHandler.PlayGames([], Bot.BotConfig.CustomGamePlayedWhileIdle).ConfigureAwait(false);
+			}
 		}
 
 		if (resumeInSeconds > 0) {

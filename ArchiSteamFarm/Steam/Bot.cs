@@ -3458,6 +3458,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			Utilities.InBackground(ResetGamesPlayed);
 		}
 
+		// Notify CardsFarmer about successful login (may auto-resume if temporarily paused)
+		await CardsFarmer.OnLoggedOn().ConfigureAwait(false);
+
 		SteamPICSChanges.OnBotLoggedOn();
 
 		await PluginsCore.OnBotLoggedOn(this).ConfigureAwait(false);

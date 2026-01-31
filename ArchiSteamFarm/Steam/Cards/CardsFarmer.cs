@@ -151,6 +151,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	public bool Paused { get; private set; }
 
 	private TaskCompletionSource<bool>? FarmingResetEvent;
+	private DateTime? LastPauseTime;
 	private bool ParsingScheduled;
 	private bool PermanentlyPaused;
 	private bool ShouldResumeFarming;
@@ -199,6 +200,14 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Utilities.InBackground(StopFarming);
+	}
+
+	internal async Task OnLoggedOn() {
+		// When bot logs on after being temporarily paused (not permanently), automatically resume farming
+		if (Paused && !PermanentlyPaused) {
+			Bot.ArchiLogger.LogGenericInfo("Auto-resuming farming after successful login (temporary pause)");
+			await Resume(false).ConfigureAwait(false);
+		}
 	}
 
 	internal async Task OnNewGameAdded() {
@@ -270,6 +279,10 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 	internal async Task Pause(bool permanent) {
 		if (permanent) {
 			PermanentlyPaused = true;
+			LastPauseTime = null; // Clear pause time for permanent pauses
+		} else {
+			// Record when temporary pause occurred
+			LastPauseTime = DateTime.UtcNow;
 		}
 
 		Paused = true;
@@ -293,6 +306,7 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		}
 
 		Paused = false;
+		LastPauseTime = null; // Clear pause timestamp when resuming
 
 		if (NowFarming) {
 			return true;
