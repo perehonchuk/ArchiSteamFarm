@@ -75,6 +75,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private const byte MinimumAccessTokenValidityMinutes = 5;
 	private const byte RedeemCooldownInHours = 1; // 1 hour since first redeem attempt, this is a limitation enforced by Steam
 	private const byte RegionRestrictionPlayableBlockMonths = 3;
+	private const byte ReconnectionBaseDelaySeconds = 5; // Base delay for exponential backoff reconnection
+	private const byte ReconnectionMaxDelayMinutes = 30; // Maximum delay between reconnection attempts
+	private const byte ReconnectionBackoffMultiplier = 2; // Multiplier for exponential backoff calculation
 
 	[PublicAPI]
 	public static IReadOnlyDictionary<string, Bot>? BotsReadOnly => Bots;
@@ -295,6 +298,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private string? AuthCode;
 	private CancellationTokenSource? CallbacksAborted;
 	private Timer? ConnectionFailureTimer;
+	private byte ConsecutiveConnectionFailures;
 	private bool FirstTradeSent;
 	private Timer? GamesRedeemerInBackgroundTimer;
 	private string? IPCountryCode;
@@ -2335,7 +2339,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				break;
 			case EResult.OK:
-				// Login succeeded
+				// Login succeeded, reset consecutive connection failures
+				ConsecutiveConnectionFailures = 0;
+
 				break;
 			default:
 				// Unexpected result, shutdown immediately
@@ -2713,6 +2719,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		ArgumentNullException.ThrowIfNull(callback);
 
 		HeartBeatFailures = 0;
+		ConsecutiveConnectionFailures = 0;
 		ReconnectOnUserInitiated = false;
 		StopConnectionFailureTimer();
 
@@ -2916,9 +2923,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			case EResult.AccessDenied when !string.IsNullOrEmpty(RefreshToken):
 			case EResult.Expired when !string.IsNullOrEmpty(RefreshToken):
 			case EResult.InvalidPassword when !string.IsNullOrEmpty(RefreshToken):
-				// We can retry immediately
+				// We can retry immediately, but still track this as a connection failure for exponential backoff
 				BotDatabase.RefreshToken = RefreshToken = null;
 				ArchiLogger.LogGenericInfo(Strings.BotRemovedExpiredLoginKey);
+				ConsecutiveConnectionFailures++;
 
 				break;
 			case EResult.AccessDenied:
@@ -2936,10 +2944,21 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					ASF.LoginRateLimitingSemaphore.Release();
 				}
 
+				ConsecutiveConnectionFailures++;
+
 				break;
 			default:
-				// Generic delay before retrying
-				await Task.Delay(5000).ConfigureAwait(false);
+				// Increment consecutive failures and apply exponential backoff
+				ConsecutiveConnectionFailures++;
+
+				// Calculate delay: base * (multiplier ^ failures), capped at max delay
+				int delaySeconds = ReconnectionBaseDelaySeconds * (int) Math.Pow(ReconnectionBackoffMultiplier, Math.Min(ConsecutiveConnectionFailures - 1, 7));
+				int maxDelaySeconds = ReconnectionMaxDelayMinutes * 60;
+				delaySeconds = Math.Min(delaySeconds, maxDelaySeconds);
+
+				ArchiLogger.LogGenericInfo($"Connection attempt {ConsecutiveConnectionFailures} failed. Waiting {TimeSpan.FromSeconds(delaySeconds).ToHumanReadable()} before reconnection...");
+
+				await Task.Delay(delaySeconds * 1000).ConfigureAwait(false);
 
 				break;
 		}
