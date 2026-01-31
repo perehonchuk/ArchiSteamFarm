@@ -42,8 +42,11 @@ using SteamKit2;
 namespace ArchiSteamFarm.OfficialPlugins.ItemsMatcher;
 
 [Export(typeof(IPlugin))]
-internal sealed class ItemsMatcherPlugin : OfficialPlugin, IBot, IBotCommand2, IBotIdentity, IBotModules, IBotTradeOfferResults, IBotUserNotifications {
+internal sealed class ItemsMatcherPlugin : OfficialPlugin, IBot, IBotCommand2, IBotIdentity, IBotModules, IPluginWithDependencies, IBotTradeOfferResults, IBotUserNotifications {
 	internal static readonly ConcurrentDictionary<Bot, RemoteCommunication> RemoteCommunications = new();
+
+	[JsonInclude]
+	public IReadOnlyCollection<string> DependsOn => new[] { "MobileAuthenticatorPlugin" };
 
 	[JsonInclude]
 	public override string Name => nameof(ItemsMatcherPlugin);

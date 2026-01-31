@@ -235,9 +235,25 @@ public static class PluginsCore {
 			return true;
 		}
 
+		// Validate plugin dependencies and determine initialization order
+		List<IPlugin>? orderedPlugins = OrderPluginsByDependencies(activePlugins);
+
+		if (orderedPlugins == null) {
+			ASF.ArchiLogger.LogGenericError("Failed to resolve plugin dependencies - circular dependency or missing dependency detected");
+
+			await Task.Delay(SharedInfo.InformationDelay).ConfigureAwait(false);
+
+			return false;
+		}
+
+		// Log initialization order for debugging
+		if (orderedPlugins.Any(static plugin => plugin is IPluginWithDependencies)) {
+			ASF.ArchiLogger.LogGenericInfo($"Plugin initialization order (based on dependencies): {string.Join(" -> ", orderedPlugins.Select(static p => p.Name))}");
+		}
+
 		HashSet<IPlugin> invalidPlugins = [];
 
-		foreach (IPlugin plugin in activePlugins) {
+		foreach (IPlugin plugin in orderedPlugins) {
 			try {
 				ASF.ArchiLogger.LogGenericInfo(Strings.FormatPluginLoading(plugin.Name, plugin.Version));
 
@@ -924,5 +940,83 @@ public static class PluginsCore {
 
 			Utilities.OnProgressChanged(pluginName, progressPercentage);
 		}
+	}
+
+	private static List<IPlugin>? OrderPluginsByDependencies(HashSet<IPlugin> plugins) {
+		ArgumentNullException.ThrowIfNull(plugins);
+
+		// Build dependency graph
+		Dictionary<string, IPlugin> pluginsByName = plugins.ToDictionary(static p => p.Name, static p => p);
+		Dictionary<string, HashSet<string>> dependencyGraph = [];
+		Dictionary<string, int> inDegree = [];
+
+		foreach (IPlugin plugin in plugins) {
+			string pluginName = plugin.Name;
+
+			if (!dependencyGraph.ContainsKey(pluginName)) {
+				dependencyGraph[pluginName] = [];
+			}
+
+			if (!inDegree.ContainsKey(pluginName)) {
+				inDegree[pluginName] = 0;
+			}
+
+			if (plugin is IPluginWithDependencies pluginWithDeps) {
+				foreach (string dependency in pluginWithDeps.DependsOn) {
+					// Validate that dependency exists
+					if (!pluginsByName.ContainsKey(dependency)) {
+						ASF.ArchiLogger.LogGenericError($"Plugin '{pluginName}' depends on '{dependency}' which is not loaded");
+
+						return null;
+					}
+
+					// Add edge from dependency to dependent
+					if (!dependencyGraph.ContainsKey(dependency)) {
+						dependencyGraph[dependency] = [];
+					}
+
+					if (dependencyGraph[dependency].Add(pluginName)) {
+						inDegree[pluginName]++;
+					}
+				}
+			}
+		}
+
+		// Topological sort using Kahn's algorithm
+		Queue<string> queue = new();
+
+		foreach (KeyValuePair<string, int> kvp in inDegree) {
+			if (kvp.Value == 0) {
+				queue.Enqueue(kvp.Key);
+			}
+		}
+
+		List<IPlugin> orderedPlugins = [];
+
+		while (queue.Count > 0) {
+			string currentPlugin = queue.Dequeue();
+			orderedPlugins.Add(pluginsByName[currentPlugin]);
+
+			if (!dependencyGraph.TryGetValue(currentPlugin, out HashSet<string>? dependents)) {
+				continue;
+			}
+
+			foreach (string dependent in dependents) {
+				inDegree[dependent]--;
+
+				if (inDegree[dependent] == 0) {
+					queue.Enqueue(dependent);
+				}
+			}
+		}
+
+		// Check for circular dependencies
+		if (orderedPlugins.Count != plugins.Count) {
+			ASF.ArchiLogger.LogGenericError("Circular dependency detected in plugin dependencies");
+
+			return null;
+		}
+
+		return orderedPlugins;
 	}
 }

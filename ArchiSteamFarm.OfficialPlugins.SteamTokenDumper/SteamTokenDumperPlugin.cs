@@ -50,7 +50,7 @@ using SteamKit2;
 namespace ArchiSteamFarm.OfficialPlugins.SteamTokenDumper;
 
 [Export(typeof(IPlugin))]
-internal sealed class SteamTokenDumperPlugin : OfficialPlugin, IASF, IBot, IBotCommand2, IBotSteamClient, ISteamPICSChanges {
+internal sealed class SteamTokenDumperPlugin : OfficialPlugin, IASF, IBot, IBotCommand2, IBotSteamClient, IPluginWithDependencies, ISteamPICSChanges {
 	private const ushort DepotsRateLimitingDelay = 500;
 
 	internal static SteamTokenDumperConfig? Config { get; private set; }
@@ -62,6 +62,9 @@ internal sealed class SteamTokenDumperPlugin : OfficialPlugin, IASF, IBot, IBotC
 
 	private static GlobalCache? GlobalCache;
 	private static DateTimeOffset LastUploadAt = DateTimeOffset.MinValue;
+
+	[JsonInclude]
+	public IReadOnlyCollection<string> DependsOn => new[] { "MonitoringPlugin" };
 
 	[JsonInclude]
 	public override string Name => nameof(SteamTokenDumperPlugin);
