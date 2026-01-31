@@ -2279,6 +2279,7 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
+		// Supports bot group selectors like @paused to target already-paused bots
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
@@ -3267,6 +3268,7 @@ public sealed class Commands {
 
 		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
+		// Bot.GetBots() supports various bot selectors including @all, @farming, @idle, @offline, @online, @paused, @enabled, and @stopped
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
