@@ -1512,6 +1512,11 @@ public sealed class Commands {
 				break;
 		}
 
+		// If PauseOnPriorityQueueEmpty is enabled and farming is paused, automatically resume
+		if (Bot.CardsFarmer.Paused && Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.PauseOnPriorityQueueEmpty)) {
+			Utilities.InBackground(() => Bot.CardsFarmer.Resume(false));
+		}
+
 		return FormatBotResponse(Strings.Done);
 	}
 
@@ -1573,6 +1578,13 @@ public sealed class Commands {
 					await Bot.CardsFarmer.StartFarming().ConfigureAwait(false);
 				}
 			);
+		}
+
+		// If PauseOnPriorityQueueEmpty is enabled and the priority queue is now empty, automatically pause
+		if (Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.PauseOnPriorityQueueEmpty) &&
+		    Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmPriorityQueueOnly) &&
+		    Bot.BotDatabase.FarmingPriorityQueueAppIDs.Count == 0) {
+			Utilities.InBackground(() => Bot.CardsFarmer.Pause(false));
 		}
 
 		return FormatBotResponse(Strings.Done);

@@ -1249,6 +1249,12 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 		if (GamesToFarm.Count == 0) {
 			ShouldResumeFarming = false;
 
+			// If PauseOnPriorityQueueEmpty is enabled and we're in priority queue only mode, pause farming automatically
+			if (Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.PauseOnPriorityQueueEmpty) && Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmPriorityQueueOnly)) {
+				Bot.ArchiLogger.LogGenericInfo("Priority queue is empty, automatically pausing farming.");
+				await Pause(false).ConfigureAwait(false);
+			}
+
 			// Allow changing to risky algorithm only if we failed at least some badge pages and we have the prop enabled
 			if (allTasksSucceeded || !Bot.BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.EnableRiskyCardsDiscovery)) {
 				return false;

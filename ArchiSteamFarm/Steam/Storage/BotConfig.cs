@@ -746,8 +746,9 @@ public sealed class BotConfig {
 		SkipRefundableGames = 16,
 		SkipUnplayedGames = 32,
 		EnableRiskyCardsDiscovery = 64,
+		PauseOnPriorityQueueEmpty = 128,
 		AutoUnpackBoosterPacks = 256,
-		All = FarmingPausedByDefault | ShutdownOnFarmingFinished | SendOnFarmingFinished | FarmPriorityQueueOnly | SkipRefundableGames | SkipUnplayedGames | EnableRiskyCardsDiscovery | AutoUnpackBoosterPacks
+		All = FarmingPausedByDefault | ShutdownOnFarmingFinished | SendOnFarmingFinished | FarmPriorityQueueOnly | SkipRefundableGames | SkipUnplayedGames | EnableRiskyCardsDiscovery | PauseOnPriorityQueueEmpty | AutoUnpackBoosterPacks
 	}
 
 	[Flags]
