@@ -1538,6 +1538,32 @@ public sealed class CardsFarmer : IAsyncDisposable, IDisposable {
 					};
 
 					break;
+				case BotConfig.EFarmingOrder.PlaytimeEfficiencyAscending:
+				case BotConfig.EFarmingOrder.PlaytimeEfficiencyDescending:
+					Dictionary<uint, double> efficiencyScores = new(GamesToFarm.Count);
+
+					foreach (Game game in GamesToFarm) {
+						// Calculate efficiency as cards remaining per hour of playtime
+						// Games with 0 hours get maximum efficiency to prioritize unplayed games
+						// Add small epsilon to avoid division by zero
+						double efficiency = game.HoursPlayed > 0
+							? game.CardsRemaining / Math.Max(game.HoursPlayed, 0.1)
+							: game.CardsRemaining * 100.0; // Multiply by 100 to give unplayed games very high efficiency
+
+						efficiencyScores[game.AppID] = efficiency;
+					}
+
+					orderedGamesToFarm = farmingOrder switch {
+						// ReSharper disable once AccessToModifiedClosure - you're wrong
+						BotConfig.EFarmingOrder.PlaytimeEfficiencyAscending => orderedGamesToFarm.ThenBy(game => efficiencyScores[game.AppID]),
+
+						// ReSharper disable once AccessToModifiedClosure - you're wrong
+						BotConfig.EFarmingOrder.PlaytimeEfficiencyDescending => orderedGamesToFarm.ThenByDescending(game => efficiencyScores[game.AppID]),
+
+						_ => throw new InvalidOperationException(nameof(farmingOrder))
+					};
+
+					break;
 				default:
 					Bot.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(farmingOrder), farmingOrder));
 
