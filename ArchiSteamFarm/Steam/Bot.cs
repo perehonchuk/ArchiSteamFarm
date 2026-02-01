@@ -683,6 +683,26 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	}
 
 	[PublicAPI]
+	public static Dictionary<string, int> GetBotGroupStatistics() {
+		if (Bots == null) {
+			throw new InvalidOperationException(nameof(Bots));
+		}
+
+		Dictionary<string, int> statistics = new() {
+			["Total"] = Bots.Count,
+			["Online"] = Bots.Count(static bot => bot.Value.IsConnectedAndLoggedOn),
+			["Offline"] = Bots.Count(static bot => !bot.Value.IsConnectedAndLoggedOn),
+			["Farming"] = Bots.Count(static bot => bot.Value.CardsFarmer.NowFarming),
+			["Idle"] = Bots.Count(static bot => !bot.Value.CardsFarmer.NowFarming),
+			["Paused"] = Bots.Count(static bot => bot.Value.CardsFarmer.Paused),
+			["Enabled"] = Bots.Count(static bot => bot.Value.BotConfig.Enabled),
+			["Stopped"] = Bots.Count(static bot => !bot.Value.KeepRunning)
+		};
+
+		return statistics;
+	}
+
+	[PublicAPI]
 	public static string GetFilePath(string botName, EFileType fileType) {
 		ArgumentException.ThrowIfNullOrEmpty(botName);
 

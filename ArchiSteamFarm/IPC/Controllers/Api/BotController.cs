@@ -625,4 +625,13 @@ public sealed class BotController : ArchiController {
 
 		return new BotRemoveLicenseResponse(apps, packages);
 	}
+
+	[EndpointSummary("Fetches statistics about bot groups")]
+	[HttpGet("Statistics")]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, int>>>((int) HttpStatusCode.OK)]
+	public ActionResult<GenericResponse> StatisticsGet() {
+		Dictionary<string, int> statistics = Bot.GetBotGroupStatistics();
+
+		return Ok(new GenericResponse<IReadOnlyDictionary<string, int>>(statistics));
+	}
 }
