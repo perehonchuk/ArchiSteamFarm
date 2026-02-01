@@ -3278,10 +3278,13 @@ public sealed class Commands {
 		}
 
 		HashSet<Bot> botsRunning = validResults.Where(static result => result.Bot.KeepRunning).Select(static result => result.Bot).ToHashSet();
+		HashSet<Bot> botsPaused = validResults.Where(static result => result.Bot.CardsFarmer.Paused).Select(static result => result.Bot).ToHashSet();
+		HashSet<Bot> botsFarming = validResults.Where(static result => result.Bot.CardsFarmer.NowFarming).Select(static result => result.Bot).ToHashSet();
 
 		string extraResponse = Strings.FormatBotStatusOverview(botsRunning.Count, validResults.Count, botsRunning.Sum(static bot => bot.CardsFarmer.GamesToFarmReadOnly.Count), botsRunning.Sum(static bot => bot.CardsFarmer.GamesToFarmReadOnly.Sum(static game => game.CardsRemaining)));
+		string stateInfo = $"Paused: {botsPaused.Count}, Farming: {botsFarming.Count}, Enabled: {botsRunning.Count}";
 
-		return string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Union(extraResponse.ToEnumerable()));
+		return string.Join(Environment.NewLine, validResults.Select(static result => result.Response).Union(extraResponse.ToEnumerable()).Union(stateInfo.ToEnumerable()));
 	}
 
 	private async Task<string?> ResponseStop(EAccess access) {

@@ -558,6 +558,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			return (false, Strings.BotAlreadyRunning);
 		}
 
+		Bot.ArchiLogger.LogGenericInfo($"Starting bot (CardsFarmer paused: {Bot.CardsFarmer.Paused})");
 		Utilities.InBackground(Bot.Start);
 
 		return (true, Strings.Done);
@@ -569,6 +570,7 @@ public sealed class Actions : IAsyncDisposable, IDisposable {
 			return (false, Strings.BotAlreadyStopped);
 		}
 
+		Bot.ArchiLogger.LogGenericInfo($"Stopping bot (CardsFarmer paused: {Bot.CardsFarmer.Paused}, farming: {Bot.CardsFarmer.NowFarming})");
 		await Bot.Stop().ConfigureAwait(false);
 
 		return (true, Strings.Done);
